@@ -1,0 +1,471 @@
+/* ---------- Page basics ---------- */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: radial-gradient(circle at top, #1e293b, #0f172a);
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  color: #f1f5f9;
+  padding: 16px;
+  user-select: none;          /* text can't be highlighted by clicking or dragging */
+  -webkit-user-select: none;  /* same thing for Safari */
+  cursor: default;            /* normal arrow instead of the text cursor (I-beam) */
+  caret-color: transparent;   /* no blinking typing cursor */
+}
+
+.wrapper {
+  width: 960px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Anything with class "hidden" disappears */
+.hidden {
+  display: none !important;
+}
+
+/* ---------- Jeepney stripes (used on the score bar and the menus) ---------- */
+/* A repeating red-yellow-blue stripe, like the paint on a jeepney */
+:root {
+  --jeep-stripes: repeating-linear-gradient(90deg,
+    #d62828 0 22px, #f9c80e 22px 44px, #1d4fbf 44px 66px);
+  --chrome: linear-gradient(180deg, #ffffff, #c9d0d6 45%, #8d969e 55%, #e5e9ec);
+}
+
+/* ---------- Score bar ---------- */
+.hud {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  background: #1e293b;
+  border: 3px solid #c9d0d6;             /* chrome edge */
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 0.95rem;
+  font-weight: bold;
+  position: relative;
+}
+
+.hud::after {                            /* jeepney stripe along the bottom */
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -9px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--jeep-stripes);
+}
+
+.hud strong {
+  color: #facc15;
+}
+
+.hud small {
+  color: #cbd5e1;
+  font-weight: normal;
+}
+
+/* Sound on/off button in the score bar */
+.mute {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* ---------- Game area ---------- */
+.stage {
+  position: relative;            /* lets the screens sit on top of the canvas */
+  width: 100%;
+}
+
+canvas {
+  display: block;
+  width: 100%;                   /* scale the 960x540 canvas to fit */
+  height: auto;                  /* keep the 16:9 shape */
+  border: 4px solid #c9d0d6;
+  border-radius: 12px;
+  touch-action: none;            /* swipes control the game instead of scrolling */
+}
+
+/* ---------- Screens on top of the game ---------- */
+.screen {
+  position: absolute;
+  inset: 0;                      /* covers the whole canvas */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.35);   /* see-through, the game shows behind */
+  animation: fade-in 0.3s ease;
+  overflow: auto;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* A menu box painted like the back of a jeepney: chrome frame + stripes */
+.jeep-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(127, 18, 32, 0.92), rgba(29, 35, 82, 0.92));
+  border: 6px solid transparent;
+  border-image: var(--chrome) 1;          /* shiny chrome border */
+  padding: 18px 26px 22px;
+  max-width: 100%;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.jeep-panel::before,                      /* stripes on the top and bottom edges */
+.jeep-panel::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 7px;
+  background: var(--jeep-stripes);
+}
+.jeep-panel::before { top: 0; }
+.jeep-panel::after  { bottom: 0; }
+
+.stars {
+  color: #f9c80e;
+  letter-spacing: 10px;
+  font-size: 1.1rem;
+  text-shadow: 0 2px 0 #7a5c00;
+}
+
+/* Big game title, hand-painted style like a jeepney sign */
+.logo {
+  font-family: Impact, "Arial Black", sans-serif;
+  font-size: clamp(1.8rem, 6vw, 3.6rem);
+  font-style: italic;
+  letter-spacing: 3px;
+  color: #ffffff;
+  line-height: 1;
+  text-shadow: 3px 3px 0 #1d4fbf, 6px 6px 0 #d62828, 0 10px 18px rgba(0, 0, 0, 0.5);
+}
+
+.logo span {
+  color: #f9c80e;
+}
+
+/* ---------- Garage (vehicle picker) ---------- */
+.garage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.arrow {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 3px solid #e5e9ec;
+  background: var(--chrome);
+  color: #1e293b;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.arrow:active {
+  transform: scale(0.92);
+}
+
+/* Picture on the left, name + stats on the right */
+.car-card {
+  width: 470px;
+  max-width: 64vw;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 2px solid #f9c80e;
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+
+#car-preview {
+  width: 190px;
+  height: auto;                    /* keeps the 240x140 shape */
+  border: 2px solid #c9d0d6;
+  border-radius: 8px;
+  flex-shrink: 0;
+  touch-action: auto;
+}
+
+#car-preview.locked {
+  filter: brightness(0.45) grayscale(0.4);   /* darker while locked */
+}
+
+.car-info {
+  flex: 1;
+  text-align: left;
+}
+
+/* Lock message + buy button for Hari ng Daan */
+.lock-box {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: #fde68a;
+}
+
+.btn.buy {
+  padding: 3px 10px;
+  font-size: 0.8rem;
+  border-width: 2px;
+  margin-left: 4px;
+  box-shadow: 0 2px 0 #8d969e;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  animation: none;
+}
+
+.car-name {
+  font-family: Impact, "Arial Black", sans-serif;
+  font-size: 1.4rem;
+  letter-spacing: 1px;
+  color: #f9c80e;
+  margin-bottom: 4px;
+}
+
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  margin: 3px 0;
+}
+
+.stat span {
+  width: 46px;
+  text-align: left;
+  color: #cbd5e1;
+}
+
+.bar {
+  flex: 1;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.bar i {                                   /* the colored part of the bar */
+  display: block;
+  height: 100%;
+  width: 50%;
+  background: var(--jeep-stripes);
+  transition: width 0.3s;
+}
+
+/* small badge next to a vehicle's name, like "E-BIKE" */
+.tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  font-family: "Trebuchet MS", sans-serif;
+  font-size: 0.7rem;
+  font-weight: bold;
+  letter-spacing: 1px;
+  color: #0f172a;
+  background: #22d3ee;
+  border-radius: 6px;
+  vertical-align: middle;
+}
+
+.car-special {
+  font-size: 0.8rem;
+  color: #f1f5f9;
+  margin-top: 6px;
+  min-height: 2.2em;
+}
+
+/* Color picker */
+.picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: bold;
+}
+
+.swatches {
+  display: flex;
+  gap: 7px;
+}
+
+.swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 3px solid rgba(255, 255, 255, 0.5);
+  background: var(--c);          /* the color comes from style="--c: ..." in the HTML */
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.swatch:hover {
+  transform: scale(1.1);
+}
+
+.swatch.selected {
+  border-color: #f9c80e;
+  transform: scale(1.15);
+  box-shadow: 0 0 0 3px rgba(249, 200, 14, 0.4);
+}
+
+.best-badge {
+  background: rgba(15, 23, 42, 0.7);
+  border: 2px solid #f9c80e;
+  border-radius: 999px;
+  padding: 4px 16px;
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+
+.best-badge strong {
+  color: #f9c80e;
+}
+
+.menu {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* How to play + game over text */
+.screen h2 {
+  font-family: Impact, "Arial Black", sans-serif;
+  font-size: clamp(1.8rem, 5vw, 3rem);
+  letter-spacing: 2px;
+  color: #f9c80e;
+  text-shadow: 3px 3px 0 #1d4fbf, 6px 6px 0 #d62828;
+}
+
+.rules {
+  list-style: none;
+  max-width: 640px;
+  font-size: clamp(0.72rem, 1.5vw, 0.95rem);
+  background: rgba(15, 23, 42, 0.7);
+  border-radius: 10px;
+  padding: 10px 18px;
+  text-align: left;
+  line-height: 1.6;
+}
+
+.rules li::before {
+  content: "★ ";
+  color: #f9c80e;
+}
+
+.rules b {
+  color: #f9c80e;
+}
+
+.final {
+  font-size: 1.6rem;
+  font-weight: bold;
+}
+
+.final strong {
+  color: #f9c80e;
+}
+
+.final-best {
+  color: #e2e8f0;
+}
+
+/* ---------- Buttons (yellow with a chrome edge) ---------- */
+.btn {
+  font-family: inherit;
+  background: #f9c80e;
+  color: #1e293b;
+  border: 3px solid #e5e9ec;
+  border-radius: 10px;
+  padding: 10px 26px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 4px 0 #8d969e;
+  transition: transform 0.1s;
+  user-select: none;
+  touch-action: manipulation;    /* stops double-tap zoom on phones */
+}
+
+.btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #8d969e;
+}
+
+.btn.big {
+  font-family: Impact, "Arial Black", sans-serif;
+  letter-spacing: 1px;
+  font-size: 1.3rem;
+  padding: 10px 40px;
+  background: linear-gradient(180deg, #ffdf4d, #f9c80e 60%, #e0a800);
+  animation: pulse 1.6s ease-in-out infinite;   /* gently grows and shrinks */
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.06); }
+}
+
+.btn.ghost {
+  background: rgba(15, 23, 42, 0.7);
+  color: #f1f5f9;
+  box-shadow: none;
+}
+
+/* ---------- Touch controls ---------- */
+.touch-controls {
+  display: flex;
+  gap: 12px;
+}
+
+.ctrl {
+  width: 90px;
+  font-size: 1.4rem;
+  padding: 12px 0;
+}
+
+.ctrl.small {
+  width: 60px;
+  font-size: 1rem;
+}
+
+/* ---------- Small screens: make the home menu more compact ---------- */
+@media (max-width: 720px) {
+  #car-preview { width: 110px; }
+  .jeep-panel { padding: 12px 12px 16px; gap: 6px; }
+  .best-badge, .stars { display: none; }
+  .car-card { padding: 6px 10px; }
+  .stat { margin: 1px 0; }
+}

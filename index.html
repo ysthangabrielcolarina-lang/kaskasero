@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kaskasero! – 2D Car Game</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="wrapper">
+
+    <!-- Score bar (only shown while playing) -->
+    <div id="hud" class="hud hidden">
+      <span>Score <strong id="score">0</strong></span>
+      <span>Kita <strong>₱<span id="kita">0</span></strong></span>
+      <span>Best <strong id="best">0</strong></span>
+      <span><strong id="speed">105</strong> km/h</span>
+      <button id="mute-btn" class="mute" aria-label="Sound on/off">🔊</button>
+    </div>
+
+    <!-- The game is drawn inside this canvas (960x540, scaled by CSS) -->
+    <div class="stage">
+      <canvas id="game" width="960" height="540"></canvas>
+
+      <!-- ===== HOME SCREEN ===== -->
+      <div id="home" class="screen">
+        <div class="jeep-panel home-panel">
+          <h1 class="logo">KASKASERO<span>!</span></h1>
+
+          <!-- Garage: pick your vehicle -->
+          <div class="garage">
+            <button id="prev-car" class="arrow" aria-label="Previous vehicle">◀</button>
+            <div class="car-card">
+              <!-- a picture of the chosen vehicle (drawn by script.js) -->
+              <canvas id="car-preview" width="280" height="140"></canvas>
+              <div class="car-info">
+                <div id="car-name" class="car-name">Sports Car</div>
+                <div class="stat"><span>Speed</span><b class="bar"><i id="stat-speed"></i></b></div>
+                <div class="stat"><span>Slim</span><b class="bar"><i id="stat-slim"></i></b></div>
+                <div id="car-special" class="car-special">Fastest car. Built for speed.</div>
+                <!-- only shown for Hari ng Daan while it's still locked -->
+                <div id="lock-box" class="lock-box hidden">
+                  🔒 Reach <b>Tagaytay</b> or
+                  <button id="buy-btn" class="btn buy">Bilhin ₱500</button>
+                </div>
+              </div>
+            </div>
+            <button id="next-car" class="arrow" aria-label="Next vehicle">▶</button>
+          </div>
+
+          <div id="color-row" class="picker">
+            <span>Kulay:</span>
+            <div id="swatches" class="swatches">
+              <!-- one button per color; data-car = which color -->
+              <button class="swatch" data-car="0" style="--c:#e8264f" aria-label="Red"></button>
+              <button class="swatch" data-car="1" style="--c:#1f8a9c" aria-label="Teal"></button>
+              <button class="swatch" data-car="2" style="--c:#f5f5f5" aria-label="White"></button>
+              <button class="swatch" data-car="3" style="--c:#2b2b2b" aria-label="Black"></button>
+              <button class="swatch" data-car="4" style="--c:#facc15" aria-label="Yellow"></button>
+              <button class="swatch" data-car="5" style="--c:#2563eb" aria-label="Blue"></button>
+            </div>
+          </div>
+
+          <div class="best-badge">🏆 Best: <strong id="home-best">0</strong> &nbsp;·&nbsp; 💰 Pera: <strong>₱<span id="wallet">0</span></strong></div>
+
+          <div class="menu">
+            <button id="play-btn" class="btn big">▶ PLAY</button>
+            <button id="howto-btn" class="btn ghost">How to Play</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== HOW TO PLAY ===== -->
+      <div id="howto" class="screen hidden">
+        <div class="jeep-panel">
+          <h2>Paano Maglaro?</h2>
+          <ul class="rules">
+            <li><b>← →</b> / <b>A D</b>, swipe, or tap ◀ ▶ to switch lanes · <b>P</b> pause · <b>M</b> sound</li>
+            <li>Pass a vehicle <b>+10</b> · Coin <b>+50</b> and pesos <b>₱</b> ("AYOS!")</li>
+            <li>Dodge at the last second for a <b>close call</b> ("GALING!"). Chain them for a <b>combo</b> ("ASTIG!" then "MUNTIK NA!")</li>
+            <li>Power-ups: <b>🛡 Shield</b> · <b>🧲 Magnet</b> · <b>⏱ Slow-mo</b> · <b>🧹 Walis</b> (clears all vehicles for 2 s). Your first one is always a shield!</li>
+            <li>Drive 2.5 km to reach the next place: Calauan → Bay → Los Baños → Calamba → SLEX → Tagaytay → Manila</li>
+            <li>Watch out later: <b>"PARA!"</b> jeepney stops, cars changing lanes, and <b>floods</b> in Los Baños</li>
+            <li>Your pesos are saved as 💰 <b>Pera</b>. Unlock <b>👑 Hari ng Daan</b> by reaching Tagaytay or buying it for <b>₱500</b></li>
+          </ul>
+          <button id="back-btn" class="btn">Bumalik</button>
+        </div>
+      </div>
+
+      <!-- ===== GAME OVER ===== -->
+      <div id="gameover" class="screen hidden">
+        <div class="jeep-panel">
+          <h2 id="over-title">SAYANG!</h2>
+          <p class="final">Score: <strong id="final-score">0</strong></p>
+          <p class="final-best">Kita: ₱<span id="over-kita">0</span> · Narating: <span id="over-loc">Calauan</span></p>
+          <p class="final-best">Best: <span id="over-best">0</span></p>
+          <div class="menu">
+            <button id="again-btn" class="btn big">Ulitin!</button>
+            <button id="home-btn" class="btn ghost">Home</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Buttons for phones / touch screens (only shown while playing) -->
+    <div id="touch" class="touch-controls hidden">
+      <button id="left-btn" class="btn ctrl" aria-label="Move left">◀</button>
+      <button id="pause-btn" class="btn ctrl small" aria-label="Pause">❚❚</button>
+      <button id="right-btn" class="btn ctrl" aria-label="Move right">▶</button>
+    </div>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
