@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
   <title>Kaskasero! – 2D Car Game</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -15,12 +16,25 @@
       <span>Kita <strong>₱<span id="kita">0</span></strong></span>
       <span>Best <strong id="best">0</strong></span>
       <span><strong id="speed">105</strong> km/h</span>
-      <button id="mute-btn" class="mute" aria-label="Sound on/off">🔊</button>
+      <span class="hud-buttons">
+        <button id="pause-btn" class="icon-btn" aria-label="Pause">⏸</button>
+        <button id="mute-btn" class="icon-btn" aria-label="Sound on/off">🔊</button>
+        <button id="full-btn" class="icon-btn" aria-label="Full screen">⛶</button>
+      </span>
     </div>
+
+    <!-- Tip for phones held upright (shown by CSS only in portrait) -->
+    <div id="rotate-hint" class="rotate-hint">📱↻ Turn your phone sideways for a bigger view</div>
 
     <!-- The game is drawn inside this canvas (960x540, scaled by CSS) -->
     <div class="stage">
       <canvas id="game" width="960" height="540"></canvas>
+
+      <!-- Big see-through steering buttons over the game (phones/tablets only, while playing) -->
+      <div id="touch" class="touch-controls hidden">
+        <button id="left-btn" class="ctrl" aria-label="Move left">◀</button>
+        <button id="right-btn" class="ctrl" aria-label="Move right">▶</button>
+      </div>
 
       <!-- ===== HOME SCREEN ===== -->
       <div id="home" class="screen">
@@ -75,12 +89,14 @@
         <div class="jeep-panel">
           <h2>Paano Maglaro?</h2>
           <ul class="rules">
-            <li><b>← →</b> / <b>A D</b>, swipe, or tap ◀ ▶ to switch lanes · <b>P</b> pause · <b>M</b> sound</li>
+            <li><b>← →</b> / <b>A D</b> to switch lanes · <b>P</b> pause · <b>M</b> sound</li>
+            <li>On phones: tap the big <b>◀ ▶</b> buttons, tap the left/right side of the game, or swipe. Turn your phone sideways and press <b>⛶</b> for full screen</li>
             <li>Pass a vehicle <b>+10</b> · Coin <b>+50</b> and pesos <b>₱</b> ("AYOS!")</li>
             <li>Dodge at the last second for a <b>close call</b> ("GALING!"). Chain them for a <b>combo</b> ("ASTIG!" then "MUNTIK NA!")</li>
             <li>Power-ups: <b>🛡 Shield</b> · <b>🧲 Magnet</b> · <b>⏱ Slow-mo</b> · <b>🧹 Walis</b> (clears all vehicles for 2 s). Your first one is always a shield!</li>
             <li>Drive 2.5 km to reach the next place: Calauan → Bay → Los Baños → Calamba → SLEX → Tagaytay → Manila</li>
             <li>Watch out later: <b>"PARA!"</b> jeepney stops, cars changing lanes, and <b>floods</b> in Los Baños</li>
+            <li><b>⚠ TAWIRAN!</b> In towns, people cross the road. Steer around them or it's <b>"HINTO!"</b></li>
             <li>Your pesos are saved as 💰 <b>Pera</b>. Unlock <b>👑 Hari ng Daan</b> by reaching Tagaytay or buying it for <b>₱500</b></li>
           </ul>
           <button id="back-btn" class="btn">Bumalik</button>
@@ -102,12 +118,6 @@
       </div>
     </div>
 
-    <!-- Buttons for phones / touch screens (only shown while playing) -->
-    <div id="touch" class="touch-controls hidden">
-      <button id="left-btn" class="btn ctrl" aria-label="Move left">◀</button>
-      <button id="pause-btn" class="btn ctrl small" aria-label="Pause">❚❚</button>
-      <button id="right-btn" class="btn ctrl" aria-label="Move right">▶</button>
-    </div>
   </main>
 
   <script src="script.js"></script>

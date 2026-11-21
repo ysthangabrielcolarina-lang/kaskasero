@@ -409,6 +409,9 @@ let laneChangeTimer, paraCooldown;
 let level, bannerT, shake, flashT, countT, lastCount, goT, crashT, crashZoom;
 // Close calls, money, floods
 let clearT = 0;        // WALIS power-up: frames left with no traffic
+let crossing = null;   // the pedestrian crossing ahead (or null)
+let crossTimer = 900;  // frames until the next crossing
+let crashText = "WASAK!";
 let combo, comboT, kita, floods, floodTimer, inFlood, splashT, magnetMax, slowMax, firstPickup;
 // Roadside scenery (see section 9d-2)
 let odo, zones, scenery, sceneryQueue, nextLandmarkAt, nextFillerAt, landmarkSide = 1;
@@ -452,6 +455,9 @@ function resetGame() {
   magnetT = 0;
   slowT = 0;
   clearT = 0;
+  crossing = null;
+  crossTimer = 900;      // first crossing after ~15 seconds
+  crashText = "WASAK!";
   invulnT = 0;
   pickupTimer = 240;      // first power-up after ~4 seconds
   laneChangeTimer = 200;
@@ -485,6 +491,7 @@ function resetGame() {
     addScenery(pickOne(LOCATIONS[0].fillers), d * SEG_LEN, d % 60 < 30 ? -1 : 1);
   }
   nextFillerAt = DRAW_DIST * SEG_LEN;
+  addWelcomeArch(30 * SEG_LEN, LOCATIONS[0].name);
   updateHud();
 }
 
@@ -571,6 +578,8 @@ function setCar(car, z, lane, type) {
 
 // Puts a car at a distance ahead of the player
 function placeCar(car, ahead) {
+  // never put a vehicle between you and a pedestrian crossing
+  if (crossing) ahead = Math.max(ahead, relZ(crossing.z, playerZ()) + 5 * SEG_LEN);
   for (let tries = 0; tries < 6; tries++) {
     const z = (playerZ() + ahead + tries * 15 * SEG_LEN) % TRACK_LEN;
     const lane = pickLane(z, car);
@@ -615,8 +624,21 @@ document.addEventListener("keydown", (e) => {
   if ((k === "enter" || k === " ") && (mode === "home" || mode === "over")) startGame();
   if (k === "escape" && mode === "over") goHome();
 });
-document.getElementById("left-btn").addEventListener("click", moveLeft);
-document.getElementById("right-btn").addEventListener("click", moveRight);
+// pointerdown reacts the moment a finger touches (faster than "click" on phones)
+document.getElementById("left-btn").addEventListener("pointerdown", (e) => { e.preventDefault(); moveLeft(); });
+document.getElementById("right-btn").addEventListener("pointerdown", (e) => { e.preventDefault(); moveRight(); });
+
+// Full screen button: makes the game fill the phone screen (and turns it sideways if allowed)
+document.getElementById("full-btn").addEventListener("click", () => {
+  if (!document.fullscreenElement) {
+    const el = document.documentElement;
+    (el.requestFullscreen || el.webkitRequestFullscreen || (() => Promise.reject())).call(el)
+      .then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock("landscape"))
+      .catch(() => {});                           // some phones (like iPhones) don't allow it: that's ok
+  } else {
+    document.exitFullscreen();
+  }
+});
 document.getElementById("pause-btn").addEventListener("click", togglePause);
 muteBtn.addEventListener("click", () => Sound.toggleMute());
 
@@ -904,11 +926,12 @@ document.addEventListener("keydown", (e) => {
 
 
 // Swipe controls for phones: swipe left or right on the game to change lanes
-let touchX = null, touchY = null;
+let touchX = null, touchY = null, touchTime = 0;
 const stage = document.querySelector(".stage");
 stage.addEventListener("touchstart", (e) => {
   touchX = e.touches[0].clientX;
   touchY = e.touches[0].clientY;
+  touchTime = performance.now();
 }, { passive: true });
 stage.addEventListener("touchend", (e) => {
   if (touchX === null) return;
@@ -916,6 +939,12 @@ stage.addEventListener("touchend", (e) => {
   const dy = e.changedTouches[0].clientY - touchY;
   if (Math.abs(dx) > 30 && Math.abs(dx) > Math.abs(dy)) {   // a sideways swipe
     if (dx < 0) moveLeft();
+    else moveRight();
+  } else if (Math.abs(dx) < 12 && Math.abs(dy) < 12 && performance.now() - touchTime < 300 &&
+             e.target === canvas) {
+    // a quick tap on the game: left half = move left, right half = move right
+    const box = canvas.getBoundingClientRect();
+    if (touchX < box.left + box.width / 2) moveLeft();
     else moveRight();
   }
   touchX = null;
@@ -930,6 +959,10 @@ function autoSteer() {
     for (const c of cars) {
       const z = relZ(c.z, pz);
       if (c.lane === lane && z > -CAR_LEN * 1.5) d = Math.min(d, z);
+    }
+    if (crossing) {                               // people on the crossing count too
+      const z = relZ(crossing.z, pz);
+      for (const p of crossing.peds) if (z > -CAR_LEN && Math.abs(p.x - LANE_POS[lane]) < 0.3) d = Math.min(d, z);
     }
     return d;
   };
@@ -1074,6 +1107,7 @@ const Sound = {
   levelUp() { [659, 784, 988, 1319].forEach((f, i) => this.tone(f, 0.16, "square", 0.06, null, i * 0.09)); },
 
   nearMiss() { this.noise(0.25, 0.25, 2000, "bandpass"); this.tone(600, 0.18, "triangle", 0.1, 1200); },
+  warning() { this.tone(988, 0.12, "square", 0.1); this.tone(988, 0.12, "square", 0.1, null, 0.2); },
   splash() { this.noise(0.6, 0.35, 700); this.noise(0.35, 0.15, 3000, "highpass", 0.05); },
 
   toggleMute() {
@@ -1142,6 +1176,7 @@ function updateLevel() {
     // The new place starts far ahead (at the horizon), so nothing near you pops
     const start = odo + DRAW_DIST * 0.9 * SEG_LEN;
     zones.push({ from: start, level });
+    addWelcomeArch(start + 1500, currentLocation().name);
     sceneryQueue = [...(currentLocation().landmarks || [])];
     nextLandmarkAt = start + 3000;
     nextFillerAt = start;
@@ -1152,6 +1187,12 @@ function updateLevel() {
 // odo = total distance driven (never wraps around like "position" does).
 // zones = where each location starts on the road.
 const LANDMARK_GAP = 22000;     // distance between two landmarks
+
+// The big "WELCOME TO ..." arch over the road (x: 0 = the middle of the road)
+function addWelcomeArch(at, name) {
+  scenery.push({ kind: "welcome", at, end: at, side: 0, z: at % TRACK_LEN, x: 0, scale: 1,
+    variant: 0, name: name.toUpperCase() });
+}
 
 function locationAt(dist) {
   let lvl = 0;
@@ -1286,15 +1327,18 @@ function updateFloods(dt) {
     if (floodTimer <= 0) {
       const l0 = Math.floor(Math.random() * (LANES - 1));
       const l1 = Math.random() < 0.5 ? l0 : l0 + 1;
-      floods.push({ at: spawnAt, z: spawnAt % TRACK_LEN, segs: 6 + Math.floor(Math.random() * 5), l0, l1 });
+      floods.push({ at: spawnAt, z: spawnAt % TRACK_LEN, segs: 6 + Math.floor(Math.random() * 5), l0, l1,
+        seed: Math.random() * 10 });              // seed = makes each puddle's edge different
       floodTimer = 180 + Math.random() * 200;
     }
   }
   floods = floods.filter((f) => f.at + f.segs * SEG_LEN > odo);
   const pz = odo + PLAYER_Z;                      // where the player is on the road
   const wasIn = inFlood;
-  inFlood = floods.some((f) => pz >= f.at && pz <= f.at + f.segs * SEG_LEN &&
-    playerX > LANE_POS[f.l0] - 0.27 && playerX < LANE_POS[f.l1] + 0.27);
+  inFlood = floods.some((f) => {                  // inside the rounded puddle?
+    const t = (pz - f.at) / (f.segs * SEG_LEN);
+    return t >= 0 && t <= 1 && Math.abs(playerX - floodCenter(f)) < floodHalfWidth(f, t, 0);
+  });
   if (inFlood && !wasIn) {
     splashT = 45;
     Sound.splash();
@@ -1398,6 +1442,86 @@ function updateHud() {
   kitaEl.textContent = kita;
 }
 
+// PEDESTRIAN CROSSING (tawiran): zebra lines across the road with people
+// walking over. A caution sign and an on-screen warning come first.
+// To keep it fair, no traffic is allowed between you and the crossing,
+// so the only thing to dodge is the people.
+const PED_W = 260;                 // a person's width (world units)
+
+function spawnCrossing() {
+  const at = odo + DRAW_DIST * 0.95 * SEG_LEN;
+  const peds = [];
+  const count = 2 + Math.floor(Math.random() * 2);            // 2 or 3 people
+  for (let i = 0; i < count; i++) {
+    const dir = Math.random() < 0.5 ? 1 : -1;                 // walking right or left
+    peds.push({
+      x: -dir * 1.35,                                         // start beside the road
+      dir,
+      speed: 0.005 + Math.random() * 0.002,                   // slow walk across
+      delay: i * 70 + Math.random() * 60,                     // they don't all start together
+      look: pickOne(PED_LOOKS),
+      step: Math.random() * 10,
+    });
+  }
+  crossing = { at, z: at % TRACK_LEN, peds, warned: false };
+  // the caution sign stands well before the crossing, on the right side
+  scenery.push({ kind: "caution", at: at - 6500, end: at - 6500, side: 1, z: (at - 6500) % TRACK_LEN,
+    x: 1.32, scale: 1, variant: 0 });
+  // clear the road between you and the crossing
+  const pz = playerZ();
+  for (const car of cars) {
+    if (relZ(car.z, crossing.z) < 4 * SEG_LEN) placeCar(car, farAhead());
+  }
+  Sound.warning();
+}
+
+function updateCrossing(dt, wdt, prevPz, pz) {
+  crossTimer -= dt;
+  if (!crossing && crossTimer <= 0) {
+    if (locationAt(odo + DRAW_DIST * 0.95 * SEG_LEN).fillers) spawnCrossing();   // only in towns
+    crossTimer = 1500 + Math.random() * 700;                  // next one in 25–37 seconds
+  }
+  if (!crossing) return;
+
+  for (const p of crossing.peds) {                            // people walk across
+    if (p.delay > 0) { p.delay -= wdt; continue; }
+    if (Math.abs(p.x) < 1.38 || Math.sign(p.x) !== p.dir) {
+      p.x += p.dir * p.speed * wdt;
+      p.step += wdt;
+    }
+  }
+
+  // Did we reach the crossing line while a person is in our way?
+  const before = relZ(crossing.z, prevPz);
+  const now = relZ(crossing.z, pz);
+  if (before >= -CAR_LEN * 0.5 && now < CAR_LEN && invulnT <= 0) {
+    const pt = ptype();
+    const touch = ((PED_W + pt.w * pt.hit) / 2 / ROAD_W) * 0.85;
+    const hit = crossing.peds.find((p) => Math.abs(p.x) < 1.2 && Math.abs(p.x - playerX) < touch);
+    if (hit) {
+      if (shield) {
+        shield = false;
+        invulnT = 90;
+        Sound.shieldBreak();
+        popup("LIGTAS!", "#38bdf8");
+      } else {
+        startCrash("HINTO!");      // "STOP!": you must give way at a crossing
+        return;
+      }
+    }
+  }
+  if (now < -PLAYER_Z - 2 * SEG_LEN) crossing = null;        // passed it
+}
+
+// Different people: shirt, pants, skin, hair, and some carry things
+const PED_LOOKS = [
+  { shirt: "#f8fafc", pants: "#1e3a8a", skin: "#c68642", hair: "#1f1f1f", bag: "#dc2626" },   // student
+  { shirt: "#f472b6", pants: "#334155", skin: "#e0ac69", hair: "#3b2a1a", bag: null },
+  { shirt: "#facc15", pants: "#78350f", skin: "#8d5524", hair: "#111111", bag: null },
+  { shirt: "#22c55e", pants: "#1f2937", skin: "#c68642", hair: "#2b1d12", bag: "#1d4ed8" },
+  { shirt: "#60a5fa", pants: "#0f172a", skin: "#e0ac69", hair: "#6b4f2a", bag: null },
+];
+
 // ----- 10. UPDATE: move everything and apply the rules -----
 // demo = true on the home screen: the car drives itself, no crashes, no score
 function update(dt, demo = false) {
@@ -1418,6 +1542,10 @@ function update(dt, demo = false) {
   odo += speed * wdt;
   const pz = playerZ();
   updateScenery();
+  if (!demo) {
+    updateCrossing(dt, wdt, prevPz, pz);
+    if (mode === "crash") return;               // ran into the crossing
+  }
 
   if (!demo) updateFloods(dt);
 
@@ -1545,7 +1673,8 @@ function updateCountdown(dt) {
 }
 
 // Crash: freeze, zoom in a little, show "WASAK!", then Game Over
-function startCrash() {
+function startCrash(text = "WASAK!") {
+  crashText = text;
   mode = "crash";
   crashT = 0;
   shake = 28;
@@ -2892,6 +3021,93 @@ Object.assign(LANDMARKS, {
   }},
 });
 
+// ----- 14d. WELCOME ARCH, CAUTION SIGN, PEOPLE and the CROSSING -----
+Object.assign(LANDMARKS, {
+  // Big welcome arch over the road when you reach a new place
+  welcome: { w: 6400, draw(p, o) {
+    for (const px of [-2930, 2670]) {                  // two pillars beside the road
+      p.R(px, 0, 260, 2000, "#e7e5e4");
+      p.R(px + 180, 0, 80, 2000, "#a8a29e");           // shaded side
+      for (let i = 0; i < 5; i++) p.R(px, 250 + i * 330, 260, 110, i % 2 ? "#1d4fbf" : "#d62828");
+      p.R(px - 60, 1950, 380, 110, "#78716c");
+    }
+    p.R(-3250, 1800, 6500, 950, "#7f1220");           // the big sign board
+    p.R(-3250, 1800, 6500, 70, "#f9c80e");
+    p.R(-3250, 2680, 6500, 70, "#f9c80e");
+    for (let i = 0; i < 26; i++) {                     // jeepney stripes on top
+      p.R(-3250 + i * 250, 2750, 250, 90, ["#d62828", "#f9c80e", "#1d4fbf"][i % 3]);
+    }
+    p.C(0, 3010, 240, "#f9c80e");                      // sun on top of the arch
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI;
+      p.P("#f9c80e", [0, 3010, Math.cos(a) * 450 - 60 * Math.sin(a), 3010 + Math.sin(a) * 450,
+        Math.cos(a) * 450 + 60 * Math.sin(a), 3010 + Math.sin(a) * 450]);
+    }
+    for (const sx of [-2900, 2900]) p.C(sx, 2280, 110, "#f9c80e");   // stars on the sides
+    p.T("WELCOME TO", 0, 2520, 220, "#f9c80e");
+    p.T(o.name || "", 0, 2120, 480, "#ffffff");
+  }},
+
+  // Yellow caution sign: a person walking (pedestrian crossing ahead)
+  caution: { w: 900, draw(p) {
+    p.R(-40, 0, 80, 1900, "#9ca3af");                  // pole
+    p.P("#111827", [0, 2650, 560, 2090, 0, 1530, -560, 2090]);   // black border diamond
+    p.P("#facc15", [0, 2580, 490, 2090, 0, 1600, -490, 2090]);
+    p.C(30, 2330, 70, "#111827");                      // walking person icon
+    p.P("#111827", [-40, 2240, 80, 2240, 110, 2010, -20, 2010]);
+    p.P("#111827", [-20, 2010, 40, 2010, -120, 1780, -190, 1800]);   // back leg
+    p.P("#111827", [40, 2010, 100, 2010, 200, 1790, 130, 1770]);     // front leg
+    p.P("#111827", [-10, 2200, 20, 2160, -170, 2050, -190, 2090]);   // arm
+    p.R(-420, 1300, 840, 230, "#111827");              // plate under the sign
+    p.R(-400, 1320, 800, 190, "#facc15");
+    p.T("TAWIRAN", 0, 1415, 150, "#111827");
+  }},
+});
+
+// A person walking across the road (world units: about 520 tall)
+function drawPed(ped, x, y, k, fog) {
+  const p = landPainter(x, y, k);
+  const L = ped.look;
+  const walking = ped.delay <= 0 && Math.abs(ped.x) < 1.38;
+  const swing = walking ? Math.sin(ped.step * 0.25) * 60 : 0;   // legs and arms swing while walking
+  p.E(0, 0, 150, 30, "rgba(0,0,0,0.25)");             // shadow
+  p.P(L.pants, [-55, 260, 5, 260, 5 + swing, 0, -55 + swing, 0]);   // legs
+  p.P(L.pants, [-5, 260, 55, 260, 55 - swing, 0, -5 - swing, 0]);
+  p.R(-65 + swing, 0, 70, 25, "#111827");             // shoes
+  p.R(-5 - swing, 0, 70, 25, "#111827");
+  if (L.bag) p.R(-95, 290, 190, 170, L.bag);          // backpack
+  p.R(-75, 250, 150, 210, L.shirt);                   // body
+  p.P(L.shirt, [-75, 440, -105, 430, -95 - swing * 0.6, 270, -70, 280]);   // arms
+  p.P(L.shirt, [75, 440, 105, 430, 95 + swing * 0.6, 270, 70, 280]);
+  p.C(0, 510, 60, L.skin);                            // head
+  p.E(0, 545, 62, 35, L.hair);                        // hair
+  if (atmo.rain > 0.4) {                              // umbrella in the rain
+    p.R(85, 380, 14, 330, "#374151");
+    p.P(ped.look.shirt, [-160, 690, 340, 690, 90, 860]);
+  }
+}
+
+// Zebra lines painted across the road at the crossing
+function drawCrossing(drawn) {
+  if (!crossing) return;
+  const N = segments.length;
+  const first = (Math.floor(crossing.z / SEG_LEN) - 1 + N) % N;   // 1 piece before to 1 after
+  for (let i = drawn.length - 1; i >= 0; i--) {
+    const seg = drawn[i];
+    const off = (seg.index - first + N) % N;
+    if (off > 1) continue;                            // the crossing is 2 road pieces long
+    const { x: x1, y: y1, w: w1 } = seg.s1;
+    const { x: x2, y: y2, w: w2 } = seg.s2;
+    const a = 1 - seg.fog * 0.8;
+    ctx.globalAlpha = a;
+    for (let s = 0; s < 12; s++) {                    // 12 white stripes across the road
+      const l = -1 + s * (2 / 12) + 0.03, r = l + 2 / 12 - 0.06;
+      poly("#f8fafc", [x1 + l * w1, y1 + 1, x1 + r * w1, y1 + 1, x2 + r * w2, y2, x2 + l * w2, y2]);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
 // ----- 15. DRAW everything -----
 function drawLayer(layer, offset) {
   const x = -(((offset % LAYER_W) + LAYER_W) % LAYER_W);
@@ -3092,6 +3308,7 @@ function drawWorld() {
   // Road pieces are painted far → near so near pieces cover far ones
   for (let i = drawn.length - 1; i >= 0; i--) drawSegment(drawn[i], drawn[i].fog);
   drawFloods(drawn);
+  drawCrossing(drawn);
 
   // --- Sprites: collect everything, then draw far → near ---
   const things = [];
@@ -3138,9 +3355,14 @@ function drawWorld() {
     });
   }
   for (const coin of coins) placeOnRoad(coin, (sx, sy, k) => drawCoin(sx, sy, k * CAR_W));
+  if (crossing) {
+    for (const ped of crossing.peds) {
+      placeOnRoad({ z: crossing.z, x: ped.x }, (sx, sy, k, fog) => drawPed(ped, sx, sy, k, fog));
+    }
+  }
   for (const sc of scenery) {
     // only PUP keeps its name sign; other buildings have no text
-    placeOnRoad(sc, (sx, sy, k) => LANDMARKS[sc.kind].draw(landPainter(sx, sy, k * sc.scale, sc.kind === "pup"), sc));
+    placeOnRoad(sc, (sx, sy, k) => LANDMARKS[sc.kind].draw(landPainter(sx, sy, k * sc.scale, ["pup", "welcome", "caution"].includes(sc.kind)), sc));
   }
   for (const p of pickups) placeOnRoad(p, (sx, sy, k) => drawPowerUp(p.kind, sx, sy, k * CAR_W));
 
@@ -3172,25 +3394,70 @@ function drawWorld() {
   return lights;
 }
 
-// Flood water painted on the road, one road piece at a time
+// How wide a flood is at a point along its length (0 = start, 1 = end):
+// round at both ends like a real puddle, with a wobbly edge
+function floodHalfWidth(f, t, wobble) {
+  const u = t * 2 - 1;                                   // -1 .. 1
+  const round = Math.pow(Math.max(0, 1 - u * u), 0.6);   // 0 at the ends, 1 in the middle
+  const half = (LANE_POS[f.l1] - LANE_POS[f.l0]) / 2 + 0.27;
+  return half * round * (1 + wobble);
+}
+const floodCenter = (f) => (LANE_POS[f.l0] + LANE_POS[f.l1]) / 2;
+
+// Flood water painted on the road as one rounded, wobbly puddle:
+// a dark wet edge, murky water, sky reflections and moving ripples
 function drawFloods(drawn) {
   if (!floods.length) return;
   const N = segments.length;
-  for (let i = drawn.length - 1; i >= 0; i--) {
-    const seg = drawn[i];
-    for (const f of floods) {
-      const off = (seg.index - (Math.floor(f.z / SEG_LEN) % N) + N) % N;
-      if (off >= f.segs) continue;
-      const end = off === 0 || off === f.segs - 1 ? 0.07 : 0;   // narrower ends look rounder
-      const xl = LANE_POS[f.l0] - 0.27 + end, xr = LANE_POS[f.l1] + 0.27 - end;
-      const a = 0.85 * (1 - seg.fog * 0.8);
-      const { x: x1, y: y1, w: w1 } = seg.s1;
-      const { x: x2, y: y2, w: w2 } = seg.s2;
-      poly(`rgba(74,120,150,${a})`, [x1 + xl * w1, y1 + 1, x1 + xr * w1, y1 + 1, x2 + xr * w2, y2, x2 + xl * w2, y2]);
-      if ((seg.index + Math.floor(frame / 12)) % 3 === 0) {     // moving ripples
-        ctx.fillStyle = `rgba(210,235,255,${a * 0.6})`;
-        ctx.fillRect(x1 + (xl + 0.15) * w1, y1 - (y1 - y2) * 0.5, (xr - xl - 0.3) * w1, Math.max(1, (y1 - y2) * 0.2));
+  const drawnSet = new Set(drawn);
+  for (const f of floods) {
+    const first = Math.floor(f.z / SEG_LEN);
+    const steps = f.segs * 3;                            // 3 points per road piece = smooth edge
+    const pts = [];
+    for (let k = 0; k <= steps; k++) {
+      const seg = segments[(first + Math.floor(k / 3)) % N];
+      if (!drawnSet.has(seg)) continue;                  // that piece isn't on screen
+      const fr = (k % 3) / 3;
+      const lerp = (a, b) => a + (b - a) * fr;
+      const t = k / steps;
+      const wob1 = 0.12 * Math.sin(k * 0.9 + f.seed), wob2 = 0.12 * Math.sin(k * 1.3 + f.seed * 2);
+      const c = floodCenter(f) + 0.04 * Math.sin(k * 0.6 + f.seed);
+      pts.push({
+        x: lerp(seg.s1.x, seg.s2.x), y: lerp(seg.s1.y, seg.s2.y), w: lerp(seg.s1.w, seg.s2.w),
+        c, l: floodHalfWidth(f, t, wob1), r: floodHalfWidth(f, t, wob2), fog: seg.fog,
+      });
+    }
+    if (pts.length < 2) continue;
+    const a = 1 - pts[Math.floor(pts.length / 2)].fog * 0.8;
+
+    // draws the puddle outline, size = 1 normal, bigger = the wet edge
+    const shape = (size, color) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      pts.forEach((q, i) => {
+        const px = q.x + (q.c - q.l * size) * q.w;
+        if (i === 0) ctx.moveTo(px, q.y); else ctx.lineTo(px, q.y);
+      });
+      for (let i = pts.length - 1; i >= 0; i--) {
+        const q = pts[i];
+        ctx.lineTo(q.x + (q.c + q.r * size) * q.w, q.y);
       }
+      ctx.closePath();
+      ctx.fill();
+    };
+    shape(1.18, `rgba(20,30,35,${0.35 * a})`);           // dark wet asphalt around it
+    shape(1, `rgba(86,104,108,${0.88 * a})`);            // murky flood water
+    shape(0.55, `rgba(170,200,215,${0.28 * a})`);        // sky reflection in the middle
+
+    // ripples: rings that grow and fade
+    ctx.lineWidth = 1.5;
+    for (let j = 0; j < 3; j++) {
+      const q = pts[Math.floor((pts.length - 1) * (0.3 + j * 0.2))];
+      const phase = (frame * 0.015 + j * 0.33 + f.seed) % 1;
+      ctx.strokeStyle = `rgba(230,240,245,${0.5 * (1 - phase) * a})`;
+      ctx.beginPath();
+      ctx.ellipse(q.x + q.c * q.w, q.y, Math.max(1, q.w * 0.18 * phase), Math.max(1, q.w * 0.03 * phase), 0, 0, Math.PI * 2);
+      ctx.stroke();
     }
   }
 }
@@ -3364,6 +3631,23 @@ function drawOverlays() {
     ctx.fillText(nextText, W / 2 - boxW / 2 + 32 + w1, 37);
   }
 
+  // Caution: pedestrian crossing ahead (blinks under the location box)
+  if (crossing && mode === "playing" && relZ(crossing.z, playerZ()) > 0 && Math.floor(frame / 15) % 2 === 0) {
+    const text = "⚠ TAWIRAN! Pedestrian crossing ahead";
+    ctx.font = "900 20px 'Trebuchet MS', sans-serif";
+    const tw = ctx.measureText(text).width + 36;
+    ctx.fillStyle = "#facc15";
+    roundRect(W / 2 - tw / 2, 66, tw, 38, 10);
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#111827";
+    ctx.stroke();
+    ctx.fillStyle = "#111827";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, W / 2, 86);
+  }
+
   // When you reach a new place: just its name, big, in the middle of the sky
   if (bannerT > 0) {
     const shown = 210 - bannerT;
@@ -3443,7 +3727,7 @@ function drawOverlays() {
     ctx.translate(W / 2, H * 0.4);
     ctx.rotate(-0.12);
     ctx.scale(s, s);
-    outlinedText("WASAK!", 0, 0, 150, "#ff3b30", "#ffd23f", 14);
+    outlinedText(crashText, 0, 0, 150, "#ff3b30", "#ffd23f", 14);
     ctx.restore();
   }
 
@@ -3503,6 +3787,7 @@ function showScreen(screen) {
   const inRun = ["countdown", "playing", "crash"].includes(mode);
   hud.classList.toggle("hidden", !inRun);
   touch.classList.toggle("hidden", !inRun);
+  document.body.classList.toggle("in-run", inRun);   // lets CSS show the "rotate your phone" tip
 }
 
 function goHome() {

@@ -21,8 +21,10 @@ body {
 }
 
 .wrapper {
-  width: 960px;
-  max-width: 100%;
+  /* As wide as possible, but never so tall that the game doesn't fit the screen:
+     the game is 16:9, so its width can be at most (screen height − score bar) × 16/9 */
+  width: min(960px, 100%, calc((100vh - 90px) * 16 / 9));
+  width: min(960px, 100%, calc((100dvh - 90px) * 16 / 9));   /* dvh = real visible height on phones */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -79,13 +81,40 @@ body {
   font-weight: normal;
 }
 
-/* Sound on/off button in the score bar */
-.mute {
-  background: none;
-  border: none;
-  font-size: 1.1rem;
-  cursor: pointer;
+/* Pause, sound and full screen buttons in the score bar */
+.hud-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 2px solid #475569;
+  background: #0f172a;
+  color: #f1f5f9;
+  font-size: 1rem;
   line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.icon-btn:active {
+  transform: scale(0.92);
+}
+
+/* "Turn your phone sideways" tip: hidden unless a phone is held upright (see bottom) */
+.rotate-hint {
+  display: none;
+  width: 100%;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #0f172a;
+  background: #f9c80e;
+  border-radius: 8px;
+  padding: 6px;
 }
 
 /* ---------- Game area ---------- */
@@ -444,28 +473,107 @@ canvas {
   box-shadow: none;
 }
 
-/* ---------- Touch controls ---------- */
+/* ---------- Touch controls: big see-through buttons over the game ---------- */
+/* They sit in the bottom corners of the game. Only shown on touch screens (see bottom). */
 .touch-controls {
-  display: flex;
-  gap: 12px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 45%;
+  display: none;
+  justify-content: space-between;
+  padding: 10px;
+  pointer-events: none;          /* the empty middle lets taps reach the game */
 }
 
 .ctrl {
-  width: 90px;
-  font-size: 1.4rem;
-  padding: 12px 0;
+  pointer-events: auto;
+  width: 22%;
+  height: 100%;
+  border-radius: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  background: rgba(15, 23, 42, 0.28);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: clamp(1.6rem, 6vw, 3rem);
+  touch-action: none;
+  user-select: none;
 }
 
-.ctrl.small {
-  width: 60px;
-  font-size: 1rem;
+.ctrl:active {
+  background: rgba(249, 200, 14, 0.45);
 }
 
-/* ---------- Small screens: make the home menu more compact ---------- */
-@media (max-width: 720px) {
-  #car-preview { width: 110px; }
-  .jeep-panel { padding: 12px 12px 16px; gap: 6px; }
-  .best-badge, .stars { display: none; }
-  .car-card { padding: 6px 10px; }
-  .stat { margin: 1px 0; }
+/* ---------- Touch screens (phones and tablets) ---------- */
+@media (hover: none) and (pointer: coarse) {
+  .touch-controls { display: flex; }
+  /* holding the phone upright during a run: show the tip */
+  @media (orientation: portrait) {
+    body.in-run .rotate-hint { display: block; }
+  }
+}
+
+/* ---------- Small screens (phones) ---------- */
+@media (max-width: 720px), (max-height: 520px) {
+  body {
+    padding: 4px;
+    align-items: flex-start;
+  }
+  .wrapper { gap: 6px; }
+
+  /* smaller score bar */
+  .hud {
+    font-size: 0.72rem;
+    padding: 4px 8px;
+    gap: 2px 8px;
+    border-width: 2px;
+  }
+  .hud::after { display: none; }
+  .icon-btn { width: 30px; height: 30px; font-size: 0.85rem; }
+  canvas { border-width: 2px; }
+
+  /* menus cover the whole phone screen (not squeezed inside the small game) */
+  .screen {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    border-radius: 0;
+    background: rgba(15, 23, 42, 0.88);
+    align-items: safe center;
+    padding: 12px;
+  }
+  .jeep-panel {
+    width: 100%;
+    max-width: 560px;
+    padding: 14px 12px 18px;
+    gap: 8px;
+  }
+  .logo { font-size: clamp(1.8rem, 9vw, 2.6rem); }
+  .garage { width: 100%; gap: 6px; }
+  .arrow { width: 38px; height: 38px; flex-shrink: 0; }
+  .car-card {
+    flex: 1;
+    width: auto;
+    max-width: none;
+    flex-direction: column;     /* picture on top, stats below */
+    align-items: stretch;
+    gap: 6px;
+  }
+  #car-preview { width: 100%; }
+  .car-info { text-align: center; }
+  .stat span { text-align: left; }
+  .swatch { width: 30px; height: 30px; }
+  .btn.big { padding: 12px 34px; }
+  .rules { font-size: 0.8rem; }
+}
+
+/* Phone turned sideways: very little height, so keep the menu short */
+@media (max-height: 520px) and (orientation: landscape) {
+  .jeep-panel { max-width: 640px; gap: 6px; padding: 10px 14px 14px; }
+  .logo { font-size: 1.9rem; }
+  .car-card { flex-direction: row; align-items: center; }
+  #car-preview { width: 150px; }
+  .car-info { text-align: left; }
+  .car-special { min-height: 0; }
+  .btn.big { padding: 8px 30px; font-size: 1.1rem; }
 }
