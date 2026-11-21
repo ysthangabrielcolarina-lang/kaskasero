@@ -1924,9 +1924,15 @@ const Sound = {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;      // very old browser: just play without sound
     this.ac = new AC();
+    // Two volume knobs: "master" for everything, and "sfx" for sound effects only.
+    // Music goes straight into master, so turning off sound effects keeps the music
+    // (and turning off the music keeps the sound effects).
     this.master = this.ac.createGain();
-    this.master.gain.value = this.muted ? 0 : 0.5;
+    this.master.gain.value = 0.5;
     this.master.connect(this.ac.destination);
+    this.sfx = this.ac.createGain();
+    this.sfx.gain.value = this.muted ? 0 : 1;
+    this.sfx.connect(this.master);
 
     // Engine: two buzzy tones through a low-pass filter (makes it a hum)
     const filter = this.ac.createBiquadFilter();
@@ -1941,7 +1947,7 @@ const Sound = {
     o1.connect(filter);
     o2.connect(filter);
     filter.connect(gain);
-    gain.connect(this.master);
+    gain.connect(this.sfx);
     o1.start();
     o2.start();
     this.engine = { o1, o2, filter, gain };
@@ -1963,7 +1969,7 @@ const Sound = {
     this.rainGain.gain.value = 0;
     rain.connect(rainFilter);
     rainFilter.connect(this.rainGain);
-    this.rainGain.connect(this.master);
+    this.rainGain.connect(this.sfx);
     rain.start();
     Music.start();        // background music starts once sound is allowed
   },
@@ -1996,7 +2002,7 @@ const Sound = {
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);   // fade out
     o.connect(g);
-    g.connect(this.master);
+    g.connect(this.sfx);
     o.start(t);
     o.stop(t + dur + 0.05);
   },
@@ -2015,7 +2021,7 @@ const Sound = {
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     src.connect(f);
     f.connect(g);
-    g.connect(this.master);
+    g.connect(this.sfx);
     src.start(t);
     src.stop(t + dur + 0.05);
   },
@@ -2071,20 +2077,33 @@ const Sound = {
       g.gain.setValueAtTime(0.16, t + len - 0.05);
       g.gain.exponentialRampToValueAtTime(0.0001, t + len);
       o.connect(g);
-      g.connect(this.master);
+      g.connect(this.sfx);
       o.start(t); wobble.start(t);
       o.stop(t + len + 0.05); wobble.stop(t + len + 0.05);
     }
   },
 
+  // Sound effects on/off (the music has its own switch)
   toggleMute() {
     this.muted = !this.muted;
     saveMuted(this.muted);
-    if (this.master) this.master.gain.value = this.muted ? 0 : 0.5;
-    muteBtn.textContent = this.muted ? "🔇" : "🔊";
+    if (this.sfx) this.sfx.gain.value = this.muted ? 0 : 1;
+    syncAudioButtons();
   },
 };
-muteBtn.textContent = Sound.muted ? "🔇" : "🔊";
+// Shows the right icons and words on all the sound buttons (top bar and home screen)
+function syncAudioButtons() {
+  muteBtn.textContent = Sound.muted ? "🔇" : "🔊";
+  muteBtn.classList.toggle("off", Sound.muted);
+  musicBtn.classList.toggle("off", !Music.on);
+  const sfxHome = document.getElementById("sfx-toggle"), musicHome = document.getElementById("music-toggle");
+  sfxHome.textContent = Sound.muted ? "🔇 Sounds: OFF" : "🔊 Sounds: ON";
+  sfxHome.classList.toggle("off", Sound.muted);
+  sfxHome.setAttribute("aria-pressed", String(!Sound.muted));
+  musicHome.textContent = Music.on ? "🎵 Music: ON" : "🎵 Music: OFF";
+  musicHome.classList.toggle("off", !Music.on);
+  musicHome.setAttribute("aria-pressed", String(Music.on));
+}
 
 // ----- 9c-2. BACKGROUND MUSIC: original loops made with the Web Audio API -----
 // A tiny "sequencer" plays one step every 16th note: drums, bass, chord
@@ -2203,7 +2222,7 @@ const Music = {
   toggle() {
     this.on = !this.on;
     saveMusicOn(this.on);
-    musicBtn.classList.toggle("off", !this.on);
+    syncAudioButtons();
   },
 
   // Plans the next few steps just ahead of time
@@ -2288,7 +2307,10 @@ const Music = {
     }
   },
 };
-musicBtn.classList.toggle("off", !Music.on);
+// Home screen sound buttons (they do the same as 🔊 and 🎵 in the top bar)
+document.getElementById("sfx-toggle").addEventListener("click", () => { Sound.init(); Sound.toggleMute(); if (!Sound.muted) Sound.coin(); });
+document.getElementById("music-toggle").addEventListener("click", () => { Sound.init(); Music.start(); Music.toggle(); });
+syncAudioButtons();
 
 // ----- 9d. LOCATIONS, WEATHER and TIME OF DAY -----
 // Every LEVEL_SCORE points you reach the next place. Each place has its own

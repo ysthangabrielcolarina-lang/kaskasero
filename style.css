@@ -794,3 +794,41 @@ canvas {
   .how-card span { display: none; }
   .how-card b { font-size: 0.72rem; }
 }
+
+
+/* ---------- Home screen: sound effects and music on/off ---------- */
+.sound-row {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.toggle {
+  font-family: "Trebuchet MS", sans-serif;
+  font-size: 0.85rem;
+  font-weight: bold;
+  padding: 6px 14px;
+  border: 2px solid #4ade80;
+  border-radius: 999px;
+  background: rgba(22, 101, 52, 0.85);   /* green = ON */
+  color: #ffffff;
+  cursor: pointer;
+  transition: transform 0.1s, background 0.2s;
+}
+
+.toggle:hover {
+  transform: translateY(-1px);
+}
+
+.toggle.off {                             /* grey = OFF */
+  border-color: #94a3b8;
+  background: rgba(51, 65, 85, 0.85);
+  color: #cbd5e1;
+}
+
+/* Phones turned sideways: a bit smaller so the home screen still fits */
+@media (max-height: 520px) and (orientation: landscape) {
+  .sound-row { margin-top: 4px; }
+  .toggle { font-size: 0.72rem; padding: 3px 10px; }
+}
