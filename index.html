@@ -8,6 +8,20 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- Intro: the logo first. Tapping / pressing a key plays the horn and opens the game -->
+  <div id="intro" class="intro">
+    <div class="intro-road"></div>
+    <div class="intro-box">
+      <div class="intro-stars">★ ☀ ★</div>
+      <h1 class="logo intro-logo">KASKASERO<span>!</span></h1>
+      <div class="intro-stripe"></div>
+      <p class="intro-tap">Tap or press any key</p>
+    </div>
+  </div>
+
+  <!-- Jeepney-stripe wipe used when switching screens -->
+  <div id="wipe" class="wipe"></div>
+
   <main class="wrapper">
 
     <!-- Score bar (only shown while playing) -->
@@ -18,6 +32,7 @@
       <span><strong id="speed">105</strong> km/h</span>
       <span class="hud-buttons">
         <button id="pause-btn" class="icon-btn" aria-label="Pause">⏸</button>
+        <button id="music-btn" class="icon-btn" aria-label="Music on/off">🎵</button>
         <button id="mute-btn" class="icon-btn" aria-label="Sound on/off">🔊</button>
         <button id="full-btn" class="icon-btn" aria-label="Full screen">⛶</button>
       </span>
@@ -45,8 +60,8 @@
           <div class="garage">
             <button id="prev-car" class="arrow" aria-label="Previous vehicle">◀</button>
             <div class="car-card">
-              <!-- a picture of the chosen vehicle (drawn by script.js) -->
-              <canvas id="car-preview" width="280" height="140"></canvas>
+              <!-- the garage: your vehicle turning on a turntable (drawn by script.js). Drag it to turn it yourself -->
+              <canvas id="car-preview" width="400" height="220"></canvas>
               <div class="car-info">
                 <div id="car-name" class="car-name">Sports Car</div>
                 <div class="stat"><span>Speed</span><b class="bar"><i id="stat-speed"></i></b></div>
@@ -88,17 +103,60 @@
       <div id="howto" class="screen hidden">
         <div class="jeep-panel">
           <h2>Paano Maglaro?</h2>
-          <ul class="rules">
-            <li><b>← →</b> / <b>A D</b> to switch lanes · <b>P</b> pause · <b>M</b> sound</li>
-            <li>On phones: tap the big <b>◀ ▶</b> buttons, tap the left/right side of the game, or swipe. Turn your phone sideways and press <b>⛶</b> for full screen</li>
-            <li>Pass a vehicle <b>+10</b> · Coin <b>+50</b> and pesos <b>₱</b> ("AYOS!")</li>
-            <li>Dodge at the last second for a <b>close call</b> ("GALING!"). Chain them for a <b>combo</b> ("ASTIG!" then "MUNTIK NA!")</li>
-            <li>Power-ups: <b>🛡 Shield</b> · <b>🧲 Magnet</b> · <b>⏱ Slow-mo</b> · <b>🧹 Walis</b> (clears all vehicles for 2 s). Your first one is always a shield!</li>
-            <li>Drive 2.5 km to reach the next place: Calauan → Bay → Los Baños → Calamba → SLEX → Tagaytay → Manila</li>
-            <li>Watch out later: <b>"PARA!"</b> jeepney stops, cars changing lanes, and <b>floods</b> in Los Baños</li>
-            <li><b>⚠ TAWIRAN!</b> In towns, people cross the road. Steer around them or it's <b>"HINTO!"</b></li>
-            <li>Your pesos are saved as 💰 <b>Pera</b>. Unlock <b>👑 Hari ng Daan</b> by reaching Tagaytay or buying it for <b>₱500</b></li>
-          </ul>
+          <!-- Each card has a small moving demo (drawn by script.js, see DEMOS) -->
+          <div class="how-grid">
+            <div class="how-card">
+              <canvas data-demo="steer" width="200" height="120"></canvas>
+              <b>Lipat-lane</b>
+              <span>← → or A D. On phones: tap ◀ ▶ or swipe</span>
+            </div>
+            <div class="how-card">
+              <canvas data-demo="pass" width="200" height="120"></canvas>
+              <b>Lampas +10</b>
+              <span>Pass vehicles. Coins give +50 and ₱ Pera</span>
+            </div>
+            <div class="how-card">
+              <canvas data-demo="close" width="200" height="120"></canvas>
+              <b>Muntik na!</b>
+              <span>Dodge at the last second for bonus points. Chain them for a combo</span>
+            </div>
+            <div class="how-card">
+              <canvas data-demo="shield" width="200" height="120"></canvas>
+              <b>🛡 Shield</b>
+              <span>Survive one crash. Your first power-up is always a shield</span>
+            </div>
+            <div class="how-card">
+              <canvas data-demo="magnet" width="200" height="120"></canvas>
+              <b>🧲 Magnet</b>
+              <span>Pulls coins into your lane</span>
+            </div>
+            <div class="how-card">
+              <canvas data-demo="slowmo" width="200" height="120"></canvas>
+              <b>⏱ Slow-mo</b>
+              <span>Traffic moves slower</span>
+            </div>
+            <div class="how-card">
+              <canvas data-demo="enforcer" width="200" height="120"></canvas>
+              <b>👮 Enforcer</b>
+              <span>A traffic enforcer clears every vehicle off the road for 2 s</span>
+            </div>
+            <div class="how-card">
+              <canvas data-demo="places" width="200" height="120"></canvas>
+              <b>Biyahe</b>
+              <span>Every 2.5 km you reach a new place, from Calauan to Ilocos</span>
+            </div>
+            <div class="how-card">
+              <canvas data-demo="hazards" width="200" height="120"></canvas>
+              <b>Ingat!</b>
+              <span>PARA stops, floods, people crossing, and TAG-INIT heat (+₱100)</span>
+            </div>
+            <div class="how-card">
+              <canvas data-demo="hari" width="200" height="120"></canvas>
+              <b>Hari ng Daan</b>
+              <span>Reach Tagaytay or buy it for ₱500 Pera</span>
+            </div>
+          </div>
+          <p class="how-keys"><b>P</b> pause · <b>M</b> all sound · <b>B</b> music · <b>⛶</b> full screen</p>
           <button id="back-btn" class="btn">Bumalik</button>
         </div>
       </div>

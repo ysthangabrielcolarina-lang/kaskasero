@@ -104,6 +104,12 @@ body {
   transform: scale(0.92);
 }
 
+/* a turned-off toggle (like music off) looks faded and crossed out */
+.icon-btn.off {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
 /* "Turn your phone sideways" tip: hidden unless a phone is held upright (see bottom) */
 .rotate-hint {
   display: none;
@@ -226,8 +232,8 @@ canvas {
 
 /* Picture on the left, name + stats on the right */
 .car-card {
-  width: 470px;
-  max-width: 64vw;
+  width: 560px;
+  max-width: 70vw;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -238,12 +244,18 @@ canvas {
 }
 
 #car-preview {
-  width: 190px;
-  height: auto;                    /* keeps the 240x140 shape */
-  border: 2px solid #c9d0d6;
-  border-radius: 8px;
+  width: 270px;
+  height: auto;                    /* keeps the 400x220 shape */
+  border: 3px solid #c9d0d6;
+  border-radius: 10px;
   flex-shrink: 0;
-  touch-action: auto;
+  touch-action: pan-y;             /* sideways drags turn the car, up/down still scrolls */
+  cursor: grab;
+  box-shadow: inset 0 0 0 1px #0f172a, 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+#car-preview:active {
+  cursor: grabbing;
 }
 
 #car-preview.locked {
@@ -317,7 +329,7 @@ canvas {
 /* small badge next to a vehicle's name, like "E-BIKE" */
 .tag {
   display: inline-block;
-  margin-left: 8px;
+  margin-right: 8px;                 /* the badge sits in front of the name */
   padding: 1px 7px;
   font-family: "Trebuchet MS", sans-serif;
   font-size: 0.7rem;
@@ -572,8 +584,213 @@ canvas {
   .jeep-panel { max-width: 640px; gap: 6px; padding: 10px 14px 14px; }
   .logo { font-size: 1.9rem; }
   .car-card { flex-direction: row; align-items: center; }
-  #car-preview { width: 150px; }
+  #car-preview { width: 190px; }
   .car-info { text-align: left; }
   .car-special { min-height: 0; }
   .btn.big { padding: 8px 30px; font-size: 1.1rem; }
+}
+
+
+/* ---------- Intro screen ---------- */
+.intro {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 40%, #3b1020, #0f172a 70%);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* a road with moving lane lines at the bottom */
+.intro-road {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28%;
+  background:
+    repeating-linear-gradient(90deg, #f1f5f9 0 60px, transparent 60px 140px) center / 100% 8px no-repeat,
+    #334155;
+  animation: road-move 0.6s linear infinite;
+}
+
+@keyframes road-move {
+  from { background-position: 0 50%, 0 0; }
+  to   { background-position: -140px 50%, 0 0; }
+}
+
+.intro-box {
+  position: relative;
+  text-align: center;
+}
+
+.intro-stars {
+  color: #f9c80e;
+  font-size: 1.6rem;
+  letter-spacing: 14px;
+  animation: fade-up 0.8s 0.4s both;
+}
+
+/* the logo pops in big, overshoots a little, then settles */
+.intro-logo {
+  font-size: clamp(3rem, 12vw, 7rem);
+  animation: logo-pop 0.9s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+@keyframes logo-pop {
+  0%   { transform: scale(0.2) rotate(-8deg); opacity: 0; }
+  60%  { transform: scale(1.12) rotate(2deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); }
+}
+
+/* jeepney stripe that grows under the logo */
+.intro-stripe {
+  height: 10px;
+  margin: 14px auto 0;
+  border-radius: 5px;
+  background: var(--jeep-stripes);
+  animation: stripe-grow 0.6s 0.6s both;
+}
+
+@keyframes stripe-grow {
+  from { width: 0; }
+  to   { width: 100%; }
+}
+
+.intro-tap {
+  margin-top: 26px;
+  font-weight: bold;
+  font-size: 1.1rem;
+  color: #f1f5f9;
+  animation: fade-up 0.6s 1s both, blink 1.2s 1.6s infinite;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes blink {
+  50% { opacity: 0.25; }
+}
+
+/* after the tap: the logo zooms toward you and the whole intro fades out */
+.intro.go {
+  animation: intro-out 0.9s ease forwards;
+  pointer-events: none;
+}
+
+.intro.go .intro-logo {
+  animation: logo-zoom 0.9s ease forwards;
+}
+
+@keyframes logo-zoom {
+  to { transform: scale(2.4); opacity: 0; }
+}
+
+@keyframes intro-out {
+  0%, 40% { opacity: 1; }
+  100%    { opacity: 0; }
+}
+
+/* ---------- Screen wipe (jeepney stripes) ---------- */
+.wipe {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: -25%;
+  width: 150%;
+  z-index: 150;
+  display: none;
+  pointer-events: none;
+  background: repeating-linear-gradient(90deg,
+    #d62828 0 70px, #f9c80e 70px 140px, #1d4fbf 140px 210px, #0f172a 210px 230px);
+}
+
+.wipe.active { display: block; }
+.wipe.in  { animation: wipe-in 0.33s ease-in forwards; }
+.wipe.out { animation: wipe-out 0.4s ease-out forwards; }
+
+@keyframes wipe-in {
+  from { transform: translateX(-110%) skewX(-18deg); }
+  to   { transform: translateX(0) skewX(-18deg); }
+}
+
+@keyframes wipe-out {
+  from { transform: translateX(0) skewX(-18deg); }
+  to   { transform: translateX(110%) skewX(-18deg); }
+}
+
+
+/* ---------- How to Play: cards with moving pictures ---------- */
+#howto .jeep-panel {
+  width: 100%;
+  max-width: 900px;
+}
+
+.how-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));   /* minmax(0,…) lets cards shrink to fit */
+  gap: 8px;
+  width: 100%;
+}
+
+.how-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 2px solid #f9c80e;
+  border-radius: 10px;
+  padding: 5px 5px 7px;
+  text-align: center;
+}
+
+.how-card canvas {
+  width: 100%;
+  height: auto;                 /* keeps the 200x120 shape */
+  border-radius: 6px;
+  background: #0f172a;
+}
+
+.how-card b {
+  color: #f9c80e;
+  font-size: 0.85rem;
+  margin-top: 2px;
+}
+
+.how-card span {
+  color: #e2e8f0;
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
+.how-keys {
+  margin: 2px 0 0;
+  font-size: 0.78rem;
+  color: #e2e8f0;
+}
+
+.how-keys b {
+  color: #f9c80e;
+}
+
+/* Phones held upright: 2 cards per row (the screen scrolls) */
+@media (max-width: 700px) {
+  .how-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .how-card span { font-size: 0.72rem; }
+}
+
+/* Phones turned sideways: 5 small cards per row, less text */
+@media (max-height: 520px) and (orientation: landscape) {
+  #howto .jeep-panel { max-width: 100%; }
+  #howto h2 { font-size: 1.4rem; margin: 0; }
+  .how-grid { gap: 5px; }
+  .how-card { padding: 3px 3px 4px; }
+  .how-card span { display: none; }
+  .how-card b { font-size: 0.72rem; }
 }

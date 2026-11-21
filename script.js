@@ -12,7 +12,7 @@
 
 // ----- 1. Canvas setup -----
 const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
+let ctx = canvas.getContext("2d");      // "let": the garage borrows it for a moment to draw car faces
 const W = canvas.width;              // 960
 const H = canvas.height;             // 540
 const HORIZON = Math.round(H * 0.34); // y where the sky meets the ground
@@ -32,6 +32,7 @@ const finalScoreEl = document.getElementById("final-score");
 const overBestEl = document.getElementById("over-best");
 const kitaEl = document.getElementById("kita");
 const muteBtn = document.getElementById("mute-btn");
+const musicBtn = document.getElementById("music-btn");
 
 // ----- 3. World settings -----
 const SEG_LEN = 200;         // length of one road segment
@@ -79,7 +80,7 @@ const VEHICLES = {
   boxtruck:  { w: 780, len: 600, weight: 9,  h: 1.46 },
   dumptruck: { w: 800, len: 600, weight: 9,  h: 1.3 },
   bus:       { w: 820, len: 900, weight: 7,  h: 1.53 },
-  kalesa:    { w: 600, len: 500, weight: 6,  h: 1.25 },   // only in Calauan and Manila
+  kalesa:    { w: 600, len: 500, weight: 6,  h: 1.25 },   // only in Calauan, Manila and Ilocos
 };
 
 const TRIKE_COLORS = [
@@ -94,11 +95,20 @@ const JEEP_COLORS = [
   { body: "#f2f2f2", dark: "#c4c4c4", band: "#d62828", stripe: "#1d4fbf", roof: "#d62828" },
 ];
 
+// E-bike (e-trike) colors you see on Filipino roads
+const EBIKE_COLORS = [
+  { body: "#dc2626", dark: "#991b1b", roof: "#1f2937" },   // red
+  { body: "#2563eb", dark: "#1e40af", roof: "#1f2937" },   // blue
+  { body: "#f1f5f9", dark: "#cbd5e1", roof: "#334155" },   // white
+  { body: "#facc15", dark: "#ca8a04", roof: "#1f2937" },   // yellow
+  { body: "#16a34a", dark: "#166534", roof: "#1f2937" },   // green
+];
+
 const pickOne = (list) => list[Math.floor(Math.random() * list.length)];
 
-// Kalesas only show up in Calauan and Manila
+// Kalesas only show up in Calauan, Manila and Ilocos (Vigan is famous for them)
 function typeWeight(t) {
-  if (t === "kalesa" && !["Calauan", "Manila"].includes(currentLocation().name)) return 0;
+  if (t === "kalesa" && !["Calauan", "Manila", "Ilocos"].includes(currentLocation().name)) return 0;
   return VEHICLES[t].weight;
 }
 
@@ -118,6 +128,7 @@ function randomLook(type) {
   if (type === "car") return pickOne(CAR_COLORS);
   if (type === "tricycle") return pickOne(TRIKE_COLORS);
   if (type === "jeepney") return pickOne(JEEP_COLORS);
+  if (type === "ebike") return pickOne(EBIKE_COLORS);
   return null;   // the others always use the same colors
 }
 
@@ -144,8 +155,8 @@ const PLAYER_TYPES = [
     special: "Very fast. Close calls give +50% points." },
   { id: "jeepney",  name: "Jeepney",      w: 660, hit: 1,    maxSpeed: 190, refillShield: true,
     special: "Matibay! Free shield in every new place." },
-  // The secret one: best at everything. Unlock by reaching Tagaytay or paying ₱500.
-  { id: "hari", name: "Hari ng Daan", tag: "E-BIKE", w: 440, hit: 0.75, maxSpeed: 250, locked: true, price: 500,
+  // The secret one: best at everything. Unlock by reaching Tagaytay or paying ₱650.
+  { id: "hari", name: "Hari ng Daan", tag: "E-BIKE", w: 440, hit: 0.75, maxSpeed: 250, locked: true, price: 650,
     startSpeed: 130, coinMult: 2, powerMult: 1.6, nearMult: 1.5, refillShield: true,
     special: "Ang Hari ng Daan! Max speed, slimmest, double ₱, all bonuses." },
 ];
@@ -216,6 +227,38 @@ const findSegment = (z) => {
   const n = segments.length;
   return segments[((Math.floor(z / SEG_LEN) % n) + n) % n];
 };
+
+// HILLS: every road piece gets a height. Two smooth waves are added together.
+// Each wave fits a whole number of times around the track, so the loop joins up.
+const N_SEG = segments.length;
+function roadHeight(n) {
+  const a = (n / N_SEG) * Math.PI * 2;
+  return 2200 * Math.sin(a * 6) + 700 * Math.sin(a * 17 + 1.3);
+}
+// HILL SIZE: the road is almost flat at the start and the hills slowly grow.
+// Calauan is nearly flat (4%), then the hills grow through Bay and Los Baños,
+// and they are full size only from Calamba onward.
+let hillScale = -1;
+function setHills(scale) {
+  if (Math.abs(scale - hillScale) < 0.002) return;   // no visible change, skip the work
+  hillScale = scale;
+  for (const seg of segments) {
+    seg.y1 = roadHeight(seg.index) * scale;        // height where this piece starts
+    seg.y2 = roadHeight(seg.index + 1) * scale;    // height where it ends
+  }
+}
+// How big the hills should be after driving a distance d
+function hillsFor(d) {
+  const t = Math.max(0, Math.min(1, (d - 200000) / 550000));  // grows from 200k to 750k
+  return 0.04 + 0.96 * t * t * (3 - 2 * t);                   // smooth start and end
+}
+setHills(hillsFor(0));
+// Road height at any distance z (in between two piece ends)
+function heightAt(z) {
+  const seg = findSegment(z);
+  const t = (((z % SEG_LEN) + SEG_LEN) % SEG_LEN) / SEG_LEN;
+  return seg.y1 + (seg.y2 - seg.y1) * t;
+}
 
 // Distance from the player to z, going the short way round the loop
 // (positive = ahead of the player, negative = behind)
@@ -305,6 +348,104 @@ const hillLayer = makeLayer((g) => {
   }
 });
 
+// Manila: tall city buildings. Two layers drawn the same way:
+//  - manilaLayer = the buildings (windows dark)
+//  - manilaLit   = only the windows that light up at night (drawn glowing on top)
+const manilaLit = document.createElement("canvas");
+manilaLit.width = LAYER_W;
+manilaLit.height = HORIZON + 2;
+const antennas = [];                       // tops of tall towers (red blinking lights)
+const manilaLayer = makeLayer((g) => {
+  const lit = manilaLit.getContext("2d");
+  const colors = ["#8fa3b8", "#7d93aa", "#a9b8c8", "#6f86a0", "#94a3b8"];
+  let x = 0;
+  while (x < LAYER_W) {
+    const bw = 34 + rand() * 50;                     // building width
+    const bh = HORIZON * (0.28 + rand() * 0.62);     // building height
+    const top = HORIZON - bh;
+    const color = colors[Math.floor(rand() * colors.length)];
+    const tall = bh > HORIZON * 0.7;
+    const litChance = 0.35 + rand() * 0.4;
+    const winColor = ["#ffe9a8", "#fff3c4", "#cfe8ff"][Math.floor(rand() * 3)];
+    wrapped(x, (bx) => {
+      g.fillStyle = color;
+      g.fillRect(bx, top, bw, bh);
+      g.fillStyle = "rgba(0,0,0,0.18)";              // shaded right side
+      g.fillRect(bx + bw * 0.7, top, bw * 0.3, bh);
+      if (tall) {                                    // stepped top + antenna
+        g.fillStyle = color;
+        g.fillRect(bx + bw * 0.2, top - 10, bw * 0.6, 10);
+        g.fillRect(bx + bw * 0.48, top - 32, 3, 22);
+      }
+    });
+    // windows: a grid of small squares
+    for (let wy = top + 6; wy < HORIZON - 6; wy += 9) {
+      for (let wx = x + 5; wx < x + bw - 6; wx += 8) {
+        const on = rand() < litChance;
+        wrapped(wx, (px) => {
+          g.fillStyle = "#5b6b7d";
+          g.fillRect(px, wy, 4, 5);
+          if (on) {
+            lit.fillStyle = winColor;
+            lit.fillRect(px, wy, 4, 5);
+          }
+        });
+      }
+    }
+    if (tall) antennas.push({ x: x + bw * 0.48 + 1.5, y: top - 32, phase: rand() * 60 });
+    x += bw + 4 + rand() * 14;
+  }
+});
+
+// Lights up the Manila windows at night. They are drawn glowing on top of the
+// dark night, but only on the sky part of the screen and NOT on anything that
+// is in front of the city (trees, vehicles, signs): those areas are cut out.
+// A hidden canvas used as a stencil: we draw the lit windows into it, then
+// ERASE every spot where a tree, car or building stands in front of the sky.
+// (Erasing handles overlapping shapes correctly, so no light leaks onto them.)
+const cityMask = document.createElement("canvas");
+cityMask.width = W;
+cityMask.height = HORIZON + 2;
+const cityCtx = cityMask.getContext("2d");
+
+function drawCityLights(boxes, groundTop) {
+  const a = bgWeight.manila * atmo.night;
+  if (a < 0.02) return;
+  const g = cityCtx, h = cityMask.height;
+  g.globalCompositeOperation = "source-over";
+  g.clearRect(0, 0, W, h);
+  // 1) copy only the part of the wide picture that is on screen
+  const start = ((bgOffset * 0.6) % LAYER_W + LAYER_W) % LAYER_W;
+  const first = Math.min(W, LAYER_W - start);
+  g.drawImage(manilaLit, start, 0, first, h, 0, 0, first, h);
+  if (first < W) g.drawImage(manilaLit, 0, 0, W - first, h, first, 0, W - first, h);  // wrap around
+  // 2) blinking red lights on the tower antennas
+  g.fillStyle = "#ff3030";
+  for (const an of antennas) {
+    if ((frame + an.phase) % 60 > 30) continue;
+    let sx = an.x - start;
+    if (sx < -10) sx += LAYER_W;
+    if (sx < -10 || sx > W + 10) continue;
+    g.globalAlpha = 1;
+    g.beginPath(); g.arc(sx, an.y, 2.5, 0, Math.PI * 2); g.fill();
+    g.globalAlpha = 0.3;
+    g.beginPath(); g.arc(sx, an.y, 7, 0, Math.PI * 2); g.fill();
+  }
+  g.globalAlpha = 1;
+  // 3) erase the ground and everything standing in front of the sky
+  g.globalCompositeOperation = "destination-out";
+  g.fillStyle = "#000";
+  g.fillRect(0, groundTop - 1, W, h);
+  for (const b of boxes) g.fillRect(b.x0 - 2, b.y0 - 2, b.x1 - b.x0 + 4, b.y1 - b.y0 + 4);
+  g.globalCompositeOperation = "source-over";
+  // 4) add the glowing result on top of the night scene
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = a;
+  ctx.drawImage(cityMask, 0, 0);
+  ctx.restore();
+}
+
 // Real mountains for some places. Each is drawn twice across the layer,
 // so one copy is always on screen.
 function farPeaks(g, color) {        // pale small peaks far away behind the big mountain
@@ -338,6 +479,7 @@ function smoothMountain(g, pts, light, dark) {
 }
 const backdrops = {
   generic: mountainLayer,
+  manila: manilaLayer,
   // Mt. Kalisungan (Calauan): a tall, round, forested mountain
   kalisungan: makeLayer((g) => {
     farPeaks(g, "#cdeedd");
@@ -387,8 +529,135 @@ const backdrops = {
     }
   }),
 };
+// ----- New places after Manila: their backgrounds -----
+// Mt. Arayat (Pampanga): one big lonely mountain with rice fields in front
+backdrops.arayat = makeLayer((g) => {
+  farPeaks(g, "#d4ecd9");
+  for (const cx of [LAYER_W * 0.3, LAYER_W * 0.8]) {
+    const h = HORIZON * 0.7, half = h * 1.9;
+    smoothMountain(g, [[cx - half, 0], [cx - half * 0.6, h * 0.35], [cx - half * 0.3, h * 0.8], [cx - half * 0.1, h * 0.95],
+      [cx + half * 0.05, h * 0.86], [cx + half * 0.18, h], [cx + half * 0.4, h * 0.7], [cx + half * 0.7, h * 0.3], [cx + half, 0]],
+      "#5f9e6e", "#4d8a5c");
+    for (let i = 0; i < 80; i++) {                    // forest texture
+      const fx = (rand() - 0.5) * 1.6, tx = cx + fx * half;
+      const top = HORIZON - h * (1 - Math.abs(fx) * 0.95) * rand() * 0.8 - 6;
+      fillPoly(g, "rgba(30,90,50,0.4)", [tx - 6, top + 12, tx, top, tx + 6, top + 12]);
+    }
+  }
+  for (let i = 0; i < 6; i++) {                       // flat green rice paddies near the horizon
+    g.fillStyle = i % 2 ? "#9bd36a" : "#86c45a";
+    g.fillRect(0, HORIZON - 18 + i * 3, LAYER_W, 3);
+  }
+  for (let i = 0; i < 30; i++) {                      // coconut trees standing in the fields
+    const x = rand() * LAYER_W, h = 22 + rand() * 14;
+    wrapped(x, (px) => {
+      g.fillStyle = "#6b4f2a";
+      g.fillRect(px, HORIZON - h, 2, h);
+      g.fillStyle = "#3f8f4a";
+      for (const a of [-2.6, -2.0, -1.2, -0.6]) {
+        g.beginPath();
+        g.ellipse(px + Math.cos(a) * 7, HORIZON - h + Math.sin(a) * 3 + 3, 8, 2.5, a + Math.PI / 2, 0, Math.PI * 2);
+        g.fill();
+      }
+    });
+  }
+});
+
+// Baguio: layers of mountain ridges covered in pine trees, with mist in between
+backdrops.baguio = makeLayer((g) => {
+  // A ridge line that joins up at both ends of the wide picture (waves with whole numbers of periods)
+  const ridge = (base, amp, seedA, color, pines) => {
+    const yAt = (x) => {
+      const a = (x / LAYER_W) * Math.PI * 2;
+      return HORIZON - base - amp * (0.5 * Math.sin(a * 3 + seedA) + 0.3 * Math.sin(a * 7 + seedA * 2) + 0.2 * Math.sin(a * 13 + seedA * 3));
+    };
+    g.fillStyle = color;
+    g.beginPath();
+    g.moveTo(0, HORIZON + 2);
+    for (let x = 0; x <= LAYER_W; x += 8) g.lineTo(x, yAt(x));
+    g.lineTo(LAYER_W, HORIZON + 2);
+    g.fill();
+    if (pines) {                                      // little pine trees along the top of the ridge
+      for (let x = 4; x < LAYER_W; x += 7 + rand() * 6) {
+        const y = yAt(x) + 2, ph = 8 + rand() * 9;
+        fillPoly(g, pines, [x - ph * 0.28, y + 2, x, y - ph, x + ph * 0.28, y + 2]);
+      }
+    }
+  };
+  const mist = (y) => {
+    const m = g.createLinearGradient(0, y - 14, 0, y + 10);
+    m.addColorStop(0, "rgba(240,245,248,0)");
+    m.addColorStop(0.6, "rgba(240,245,248,0.75)");
+    m.addColorStop(1, "rgba(240,245,248,0)");
+    g.fillStyle = m;
+    g.fillRect(0, y - 14, LAYER_W, 24);
+  };
+  ridge(HORIZON * 0.55, HORIZON * 0.25, 0.5, "#a9c4bd", null);
+  mist(HORIZON * 0.5);
+  ridge(HORIZON * 0.35, HORIZON * 0.2, 2.1, "#6f9a88", "#5d8a77");
+  mist(HORIZON * 0.68);
+  ridge(HORIZON * 0.15, HORIZON * 0.14, 4.2, "#3f6f58", "#2f5c47");
+  mist(HORIZON * 0.88);
+  for (let i = 0; i < 40; i++) {                      // houses on the hillside (Baguio is colorful!)
+    const x = rand() * LAYER_W, y = HORIZON - 6 - rand() * HORIZON * 0.2;
+    const col = ["#f87171", "#facc15", "#60a5fa", "#f9fafb", "#a78bfa", "#4ade80"][Math.floor(rand() * 6)];
+    wrapped(x, (px) => {
+      g.fillStyle = col;
+      g.fillRect(px, y, 6, 5);
+      g.fillStyle = "#475569";
+      g.fillRect(px - 1, y - 2, 8, 2);
+    });
+  }
+});
+
+// Ilocos: the sea at the horizon, dunes on the shore and the Bangui windmills
+const windmills = [];                       // blades are drawn turning, every frame
+backdrops.ilocos = makeLayer((g) => {
+  farPeaks(g, "#d7d2c4");
+  g.fillStyle = "#3b82c4";                            // the West Philippine Sea
+  g.fillRect(0, HORIZON - 24, LAYER_W, 26);
+  g.fillStyle = "rgba(255,255,255,0.4)";
+  for (let i = 0; i < 50; i++) g.fillRect(rand() * LAYER_W, HORIZON - 22 + rand() * 18, 16 + rand() * 30, 2);
+  g.fillStyle = "#e9d8a6";                            // sandy shore
+  g.fillRect(0, HORIZON - 6, LAYER_W, 8);
+  for (let i = 0; i < 26; i++) {                      // a long row of white wind turbines along the coast
+    const x = (i / 26) * LAYER_W + rand() * 20;
+    const h = 46 + rand() * 18, top = HORIZON - 6 - h;
+    wrapped(x, (px) => fillPoly(g, "#f1f5f9", [px - 2, HORIZON - 6, px + 2, HORIZON - 6, px + 1, top, px - 1, top]));
+    windmills.push({ x, y: top, len: h * 0.42, phase: rand() * 6 });
+  }
+});
+
+// The windmill blades turn (drawn on top of the Ilocos background every frame)
+function drawWindmillBlades() {
+  const a = bgWeight.ilocos;
+  if (a < 0.02) return;
+  const start = ((bgOffset * 0.6) % LAYER_W + LAYER_W) % LAYER_W;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.strokeStyle = "#f8fafc";
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  for (const m of windmills) {
+    let sx = m.x - start;
+    if (sx < -40) sx += LAYER_W;
+    if (sx < -40 || sx > W + 40) continue;
+    const turn = frame * 0.03 + m.phase;
+    ctx.beginPath();
+    for (let i = 0; i < 3; i++) {
+      const ang = turn + (i * Math.PI * 2) / 3;
+      ctx.moveTo(sx, m.y);
+      ctx.lineTo(sx + Math.cos(ang) * m.len, m.y + Math.sin(ang) * m.len);
+    }
+    ctx.stroke();
+    ctx.fillStyle = "#cbd5e1";
+    ctx.fillRect(sx - 2, m.y - 1.5, 4, 3);
+  }
+  ctx.restore();
+}
+
 // How much each backdrop shows right now (they fade into each other)
-const bgWeight = { generic: 1, kalisungan: 0, makiling: 0, taal: 0 };
+const bgWeight = { generic: 1, kalisungan: 0, makiling: 0, taal: 0, manila: 0, arayat: 0, baguio: 0, ilocos: 0 };
 
 const skyGradient = ctx.createLinearGradient(0, 0, 0, HORIZON);
 skyGradient.addColorStop(0, "#a9e3f2");
@@ -408,7 +677,7 @@ let laneChangeTimer, paraCooldown;
 // Effects: level/banner, screen shake, white flash, countdown, crash zoom
 let level, bannerT, shake, flashT, countT, lastCount, goT, crashT, crashZoom;
 // Close calls, money, floods
-let clearT = 0;        // WALIS power-up: frames left with no traffic
+let clearT = 0;        // ENFORCER power-up: frames left with no traffic
 let crossing = null;   // the pedestrian crossing ahead (or null)
 let crossTimer = 900;  // frames until the next crossing
 let crashText = "WASAK!";
@@ -455,8 +724,12 @@ function resetGame() {
   magnetT = 0;
   slowT = 0;
   clearT = 0;
+  pfx = null; edgeT = 0; enforcerT = 0; ghostXs = [];
   crossing = null;
   crossTimer = 900;      // first crossing after ~15 seconds
+  parts = [];
+  tilt = 0;
+  recordShown = false;
   crashText = "WASAK!";
   invulnT = 0;
   pickupTimer = 240;      // first power-up after ~4 seconds
@@ -481,6 +754,7 @@ function resetGame() {
   for (let i = 0; i < 3; i++) coins.push(placeOnLane({}, (40 + i * 60) * SEG_LEN));
 
   odo = 0;
+  setHills(hillsFor(0));            // small hills again for a new run
   lastPlaced["-1"] = lastPlaced["1"] = -Infinity;
   zones = [{ from: -Infinity, level: 0 }];
   scenery = [];
@@ -517,7 +791,7 @@ function loadTypeChoice() {
 function saveTypeChoice(v) {
   try { localStorage.setItem("highwayDashType", v); } catch { /* ignore */ }
 }
-// Pera (money): all the pesos you ever collected. Spend ₱500 to unlock Hari ng Daan.
+// Pera (money): all the pesos you ever collected. Spend ₱650 to unlock Hari ng Daan.
 function loadWallet() {
   try { return Number(localStorage.getItem("highwayDashWallet")) || 0; }
   catch { return 0; }
@@ -531,6 +805,13 @@ function loadHari() {
 }
 function saveHari() {
   try { localStorage.setItem("highwayDashHari", "1"); } catch { /* ignore */ }
+}
+function loadMusicOn() {
+  try { return localStorage.getItem("highwayDashMusic") !== "0"; }
+  catch { return true; }
+}
+function saveMusicOn(v) {
+  try { localStorage.setItem("highwayDashMusic", v ? "1" : "0"); } catch { /* ignore */ }
 }
 function loadMuted() {
   try { return localStorage.getItem("highwayDashMuted") === "1"; }
@@ -620,9 +901,10 @@ document.addEventListener("keydown", (e) => {
   if (k === "arrowright" || k === "d") moveRight();
   if (k === "p") togglePause();
   if (k === "m") Sound.toggleMute();
+  if (k === "b") Music.toggle();               // B = background music on/off
   if ([" ", "arrowleft", "arrowright"].includes(k)) e.preventDefault(); // don't scroll the page
-  if ((k === "enter" || k === " ") && (mode === "home" || mode === "over")) startGame();
-  if (k === "escape" && mode === "over") goHome();
+  if ((k === "enter" || k === " ") && (mode === "home" || mode === "over")) transition(startGame);
+  if (k === "escape" && mode === "over") transition(goHome);
 });
 // pointerdown reacts the moment a finger touches (faster than "click" on phones)
 document.getElementById("left-btn").addEventListener("pointerdown", (e) => { e.preventDefault(); moveLeft(); });
@@ -641,19 +923,20 @@ document.getElementById("full-btn").addEventListener("click", () => {
 });
 document.getElementById("pause-btn").addEventListener("click", togglePause);
 muteBtn.addEventListener("click", () => Sound.toggleMute());
+musicBtn.addEventListener("click", () => Music.toggle());
 
 // Home screen buttons
-document.getElementById("play-btn").addEventListener("click", startGame);
-document.getElementById("again-btn").addEventListener("click", startGame);
-document.getElementById("home-btn").addEventListener("click", goHome);
-document.getElementById("howto-btn").addEventListener("click", () => {
+document.getElementById("play-btn").addEventListener("click", () => transition(startGame));
+document.getElementById("again-btn").addEventListener("click", () => transition(startGame));
+document.getElementById("home-btn").addEventListener("click", () => transition(goHome));
+document.getElementById("howto-btn").addEventListener("click", () => transition(() => {
   homeScreen.classList.add("hidden");
   howtoScreen.classList.remove("hidden");
-});
-document.getElementById("back-btn").addEventListener("click", () => {
+}));
+document.getElementById("back-btn").addEventListener("click", () => transition(() => {
   howtoScreen.classList.add("hidden");
   homeScreen.classList.remove("hidden");
-});
+}));
 
 // Car color picker: highlight the chosen swatch and remember it
 const swatches = document.querySelectorAll(".swatch");
@@ -671,7 +954,9 @@ showCarChoice();
 // Garage: choose your vehicle with ◀ ▶ (or the arrow keys on the home screen)
 if (!PLAYER_TYPES[typeChoice]) typeChoice = 0;      // an old save might point to a removed car
 const previewCanvas = document.getElementById("car-preview");
-const g = previewCanvas.getContext("2d");          // "g" = the small garage picture
+let g = previewCanvas.getContext("2d");            // "g" = the garage picture
+let svFlip = false;        // true while drawing the mirrored (left) side of a car
+let noShadow = false;      // true while drawing car faces for the garage turntable
 
 // ----- Side-view drawings for the garage picture (the car faces right) -----
 // The picture is 280 x 140 pixels. The road is at y = 120.
@@ -703,7 +988,63 @@ const sv = {
     }
     sv.C(x, y, r * 0.18, "#334155");
   },
+  // A smooth filled shape: fn draws the outline with moveTo / lineTo / curves
+  path(fill, fn) {
+    g.beginPath();
+    fn(g);
+    g.closePath();
+    g.fillStyle = fill;
+    g.fill();
+  },
+  // A line or curve (not filled)
+  line(color, width, fn) {
+    g.beginPath();
+    fn(g);
+    g.strokeStyle = color;
+    g.lineWidth = width;
+    g.lineCap = "round";
+    g.stroke();
+  },
+  // Colors that blend from top (y0) to bottom (y1): gives a shiny, rounded look
+  grad(y0, y1, stops) {
+    const gr = g.createLinearGradient(0, y0, 0, y1);
+    for (const [at, c] of stops) gr.addColorStop(at, c);
+    return gr;
+  },
+  // Wheel arch: a dark hole in the body with a thin edge around it
+  arch(x, r, lip) {
+    const y = GROUND - r;
+    g.fillStyle = lip;
+    g.beginPath(); g.arc(x, y, r + 5, Math.PI, Math.PI * 2); g.fill();
+    sv.C(x, y, r + 3.5, "#0b0b0b");
+  },
+  // Alloy wheel: tire, shiny rim, spokes, (brake caliper), hub
+  alloy(x, r, rim, spokes, caliper) {
+    const y = GROUND - r;
+    sv.C(x, y, r, "#0f0f0f");
+    sv.C(x, y, r * 0.9, "#262626");
+    const shine = g.createRadialGradient(x - r * 0.2, y - r * 0.25, 1, x, y, r * 0.7);
+    shine.addColorStop(0, "#ffffff");
+    shine.addColorStop(0.5, rim);
+    shine.addColorStop(1, "#6b7280");
+    sv.C(x, y, r * 0.68, shine);
+    sv.C(x, y, r * 0.56, "#1f2937");
+    if (caliper) {
+      g.fillStyle = caliper;
+      g.beginPath(); g.arc(x, y, r * 0.5, 3.6, 4.6); g.arc(x, y, r * 0.3, 4.6, 3.6, true); g.fill();
+    }
+    g.strokeStyle = rim;
+    g.lineWidth = r * 0.14;
+    g.lineCap = "round";
+    for (let i = 0; i < spokes; i++) {
+      const a = (i / spokes) * Math.PI * 2 + 0.3;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * r * 0.58, y + Math.sin(a) * r * 0.58); g.stroke();
+    }
+    sv.C(x, y, r * 0.17, rim);
+    sv.C(x, y, r * 0.07, "#111111");
+  },
   shadow(x1, x2) {
+    if (noShadow) return;              // (not on the garage turntable faces)
     g.fillStyle = "rgba(0,0,0,0.35)";
     g.beginPath();
     g.ellipse((x1 + x2) / 2, GROUND + 1, (x2 - x1) / 2, 5, 0, 0, Math.PI * 2);
@@ -715,22 +1056,52 @@ const sv = {
   },
 };
 
-// Sports car: low wedge, big rear wing, side stripe and air intake
+// Text that stays readable even when the side view is mirrored
+function svText(text, x, y) {
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillText(text, svFlip ? FACE_W - x : x, y);
+  g.restore();
+}
+
+// Sports car: smooth fastback body, wheel arches, side scoop, rear wing, alloy wheels
 function sideSports(col) {
-  sv.shadow(30, 260);
-  sv.P(col.body, [24, 110, 24, 93, 46, 87, 110, 83, 140, 66, 184, 64, 212, 81, 250, 89, 258, 101, 254, 112, 24, 112]);
-  sv.P(col.top, [46, 87, 110, 83, 140, 66, 184, 64, 186, 67, 142, 70, 112, 87, 48, 91]);   // light on top edges
-  sv.glass([116, 83, 142, 69, 180, 67, 200, 82]);
-  sv.R(160, 67, 3, 16, col.body);
-  sv.R(34, 98, 216, 4, "rgba(255,255,255,0.85)");             // racing stripe
-  sv.P("#111111", [112, 93, 136, 93, 132, 103, 116, 103]);    // side air intake
-  sv.R(40, 108, 180, 4, col.dark);
-  sv.R(20, 70, 46, 6, "#111111");                             // rear wing
-  sv.R(36, 76, 5, 13, "#111111");
-  sv.R(20, 92, 7, 6, "#ff3b30");                              // tail light
-  sv.P("#fde68a", [248, 91, 258, 95, 258, 99, 248, 98]);      // headlight
-  sv.wheel(72, 17);
-  sv.wheel(208, 17);
+  sv.shadow(22, 264);
+  const W1 = 72, W2 = 212, R = 18;
+  sv.R(30, 80, 4, 9, "#111111");                              // rear wing struts (behind the body)
+  sv.R(48, 79, 4, 9, "#111111");
+  sv.path(sv.grad(58, 114, [[0, col.top], [0.42, col.body], [1, col.dark]]), (c) => {
+    c.moveTo(24, 110);
+    c.lineTo(19, 97);
+    c.quadraticCurveTo(19, 88, 30, 87);                       // rounded rear corner
+    c.lineTo(100, 83);                                        // trunk
+    c.bezierCurveTo(122, 79, 138, 63, 162, 61);               // fastback up to the roof
+    c.bezierCurveTo(184, 60, 198, 70, 214, 80);               // windshield down to the hood
+    c.bezierCurveTo(232, 83, 250, 86, 258, 92);               // long low hood
+    c.quadraticCurveTo(264, 98, 258, 106);                    // nose
+    c.lineTo(250, 110);
+  });
+  sv.R(28, 99, 226, 3, "rgba(255,255,255,0.9)");              // racing stripe
+  sv.path("#151515", (c) => { c.moveTo(94, 104); c.lineTo(192, 104); c.lineTo(190, 111); c.lineTo(96, 111); });   // side skirt
+  sv.line("rgba(255,255,255,0.5)", 2, (c) => { c.moveTo(34, 89); c.bezierCurveTo(100, 85, 180, 84, 250, 90); });  // shine on the shoulder
+  sv.path("#111111", (c) => { c.moveTo(104, 92); c.quadraticCurveTo(118, 87, 134, 89); c.lineTo(127, 101); c.quadraticCurveTo(114, 102, 106, 100); });   // air scoop
+  sv.line(col.dark, 1.2, (c) => { c.moveTo(146, 84); c.quadraticCurveTo(143, 95, 148, 104); });   // door line
+  sv.path(sv.grad(62, 84, [[0, "#4b5d70"], [1, "#0f172a"]]), (c) => {   // side windows
+    c.moveTo(112, 83);
+    c.bezierCurveTo(128, 79, 140, 66, 162, 65);
+    c.bezierCurveTo(180, 64, 194, 72, 205, 81);
+  });
+  sv.R(157, 64, 3, 19, col.dark);                             // pillar between the windows
+  sv.P("rgba(255,255,255,0.28)", [170, 66, 178, 66, 168, 82, 160, 82]);
+  sv.path(col.body, (c) => { c.moveTo(196, 79); c.lineTo(206, 76); c.lineTo(207, 82); c.lineTo(198, 83); });   // mirror
+  sv.path("#e0f2fe", (c) => { c.moveTo(244, 88); c.lineTo(259, 92); c.lineTo(258, 96); c.lineTo(246, 93); });  // headlight
+  sv.path("#ff3b30", (c) => { c.moveTo(19, 92); c.lineTo(31, 90); c.lineTo(31, 95); c.lineTo(20, 97); });     // tail light
+  sv.path("#111111", (c) => { c.moveTo(13, 74); c.lineTo(60, 72); c.lineTo(62, 77); c.lineTo(15, 80); });     // rear wing
+  sv.R(13, 73, 49, 1.5, "#3f3f46");
+  sv.arch(W1, R, col.dark);
+  sv.arch(W2, R, col.dark);
+  sv.alloy(W1, R, "#d1d5db", 5, "#dc2626");
+  sv.alloy(W2, R, "#d1d5db", 5, "#dc2626");
 }
 
 // Electric car: smooth body, big glass roof, light strips, aero wheels
@@ -768,117 +1139,663 @@ function sideMuscle(col) {
   sv.wheel(214, 17);
 }
 
-// Jeepney: long colorful body, open windows with passengers, chrome hood
+// Jeepney: passenger body with open windows, cab, long chrome hood, fenders and horses
 function sideJeepney() {
   const look = JEEP_COLORS[0];
-  sv.shadow(16, 266);
-  sv.R(20, 84, 186, 26, look.body);                           // passenger body
-  sv.R(20, 90, 186, 5, look.band);
-  sv.R(20, 100, 186, 3, look.stripe);
-  g.fillStyle = "#ffffff";
-  g.font = "900 8px 'Trebuchet MS', sans-serif";
-  g.textAlign = "center";
-  g.fillText("GOD BLESS OUR TRIP", 144, 109);
-  sv.C(46, 96, 4, look.band);                                 // little sun
-  sv.R(20, 50, 186, 34, "#3b2a1a");                           // open windows (dark inside)
+  sv.shadow(10, 272);
+  const W1 = 62, W2 = 228, R = 16;
+  const chrome = sv.grad(80, 110, [[0, "#f8fafc"], [0.5, "#aab3bc"], [1, "#e2e8f0"]]);
+  // roof with stripes and a row of little lights
+  sv.path(look.roof, (c) => { c.moveTo(10, 40); c.lineTo(204, 40); c.quadraticCurveTo(214, 40, 216, 48); c.lineTo(216, 51); c.lineTo(10, 51); });
+  sv.R(10, 44, 205, 2, look.band);
+  sv.R(10, 47, 205, 2, look.stripe);
+  const bulbs = ["#ff3b30", "#facc15", "#4ade80", "#38bdf8"];
+  for (let i = 0; i < 17; i++) sv.C(18 + i * 11, 39, 1.8, bulbs[i % 4]);
+  // open window band with passengers
+  sv.R(14, 51, 184, 28, "#2a1d12");
   const shirts = ["#38bdf8", "#f472b6", "#4ade80", "#facc15", "#a78bfa", "#fb923c", "#f87171"];
-  for (let i = 0; i < 7; i++) {                               // passengers
-    const px = 36 + i * 24;
-    sv.C(px, 64, 5, "#8d5a3b");
-    sv.R(px - 7, 70, 14, 14, shirts[i]);
+  for (let i = 0; i < 7; i++) {
+    const px = 30 + i * 24;
+    sv.C(px, 62, 4.5, "#8d5a3b");
+    sv.R(px - 4, 57, 8, 2.5, "#1f1f1f");                      // hair
+    sv.R(px - 6, 67, 12, 12, shirts[i]);
   }
-  for (let i = 0; i <= 8; i++) sv.R(20 + i * 23, 50, 3, 34, "#d7dde2");   // chrome posts
-  sv.R(16, 40, 194, 8, look.roof);                            // roof with bands
-  sv.R(16, 48, 194, 3, look.band);
-  sv.R(16, 38, 194, 2, look.stripe);
-  sv.P("#bfe3f5", [206, 50, 222, 50, 226, 82, 206, 82]);      // windshield
-  sv.P(look.roof, [206, 40, 222, 46, 222, 50, 206, 50]);
-  sv.P("#c9d0d6", [206, 82, 262, 86, 264, 108, 206, 110]);    // chrome hood
-  for (let i = 0; i < 4; i++) sv.R(214 + i * 11, 88, 6, 16, "#9aa3ab");
-  sv.R(236, 76, 10, 8, "#c9d0d6");                            // hood ornament horse (simple)
-  sv.R(244, 72, 4, 6, "#c9d0d6");
-  sv.R(256, 54, 2, 30, "#d7dde2");                            // antenna with a flag
-  sv.P("#d62828", [258, 54, 268, 58, 258, 62]);
-  sv.R(10, 102, 12, 6, "#c9d0d6");                            // rear step
-  sv.R(260, 100, 8, 6, "#c9d0d6");
-  sv.wheel(64, 16);
-  sv.wheel(224, 16);
+  sv.R(14, 55, 184, 1.5, "#d7dde2");                          // grab rail
+  for (let i = 0; i <= 8; i++) sv.R(14 + i * 23, 51, 2.5, 28, "#d7dde2");   // chrome posts
+  // the cab: open driver window and the windshield edge
+  sv.path("#2a1d12", (c) => { c.moveTo(198, 51); c.lineTo(213, 51); c.lineTo(223, 79); c.lineTo(198, 79); });
+  sv.C(207, 63, 4.5, "#8d5a3b");                              // the driver
+  sv.R(201, 68, 12, 11, "#f8fafc");
+  sv.line("#bfe3f5", 3, (c) => { c.moveTo(213, 51); c.lineTo(223, 79); });
+  sv.R(196, 51, 3, 28, look.roof);
+  // painted body, with a rounded back corner
+  sv.path(sv.grad(78, 110, [[0, look.band], [0.12, look.body], [1, look.dark]]), (c) => {
+    c.moveTo(12, 79); c.lineTo(224, 79); c.lineTo(224, 108); c.lineTo(24, 108);
+    c.quadraticCurveTo(12, 108, 12, 98);
+  });
+  sv.R(12, 80, 212, 8, look.band);                            // route sign band
+  g.fillStyle = "#1e293b";
+  g.font = "900 7px 'Trebuchet MS', sans-serif";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  svText("CALAUAN • MANILA", 110, 84.5);
+  sv.R(12, 89, 212, 2, look.stripe);
+  sv.R(14, 94, 208, 12, chrome);                              // stainless lower panel with ribs
+  for (let x = 18; x < 220; x += 6) sv.R(x, 95, 1, 10, "rgba(100,116,139,0.45)");
+  sv.R(4, 101, 12, 4, "#c9d0d6");                             // rear step
+  // long chrome hood with louvers
+  sv.path(chrome, (c) => { c.moveTo(222, 80); c.lineTo(256, 83); c.quadraticCurveTo(264, 85, 265, 92); c.lineTo(265, 108); c.lineTo(222, 108); });
+  for (let i = 0; i < 6; i++) sv.R(230 + i * 4, 87, 2, 10, "#7b8794");
+  sv.R(263, 86, 6, 21, "#9aa3ab");                            // grille seen from the side
+  sv.C(264, 93, 4.5, "#e2e8f0");                              // headlight
+  sv.C(265, 93, 3, "#fef9c3");
+  sv.R(259, 104, 14, 5, "#d7dde2");                           // front bumper
+  // front fender over the wheel
+  sv.path(look.body, (c) => { c.moveTo(206, 108); c.quadraticCurveTo(208, 88, 228, 86); c.quadraticCurveTo(248, 88, 250, 108); });
+  // two silver horses on the hood
+  for (const hx of [244, 254]) {
+    sv.P("#e5e7eb", [hx - 4, 83, hx + 3, 83, hx + 4, 78, hx + 6, 76, hx + 4, 74, hx + 1, 76, hx - 3, 77]);
+  }
+  sv.line("#cbd5e1", 1, (c) => { c.moveTo(260, 84); c.lineTo(262, 54); c.moveTo(250, 84); c.lineTo(251, 60); });   // antennas
+  sv.P("#d62828", [262, 54, 272, 57, 262, 61]);
+  sv.P("#1d4fbf", [251, 60, 259, 62, 251, 65]);
+  sv.line("#cbd5e1", 1.5, (c) => { c.moveTo(222, 62); c.lineTo(232, 56); });   // side mirror
+  sv.R(230, 50, 5, 10, "#e5e7eb");
+  sv.arch(W1, R, "#9ca3af");
+  sv.arch(W2, R, "#9ca3af");
+  sv.alloy(W1, R, "#e5e7eb", 8, null);
+  sv.alloy(W2, R, "#e5e7eb", 8, null);
 }
 
-// Hari ng Daan: premium e-trike with canopy, red leather seat, gold and neon
+// Hari ng Daan: a premium covered e-bike (3 wheels) in black and gold with a neon glow
 function sideHari() {
-  const glow = g.createRadialGradient(140, GROUND, 0, 140, GROUND, 120);   // neon underglow
-  glow.addColorStop(0, "rgba(34,211,238,0.6)");
-  glow.addColorStop(1, "rgba(34,211,238,0)");
-  g.fillStyle = glow;
-  g.fillRect(20, GROUND - 25, 240, 30);
-  sv.shadow(40, 240);
-  sv.P("#141414", [36, 108, 46, 92, 168, 92, 208, 98, 232, 106, 232, 110, 36, 110]);   // chassis
-  sv.R(46, 72, 120, 22, "#141414");                           // body
-  sv.R(46, 72, 120, 2, "#facc15");
-  sv.R(46, 92, 120, 2, "#facc15");
-  sv.P("#facc15", [60, 86, 100, 80, 92, 86, 130, 82, 120, 90, 60, 90]);   // gold flames
-  sv.R(46, 96, 186, 2, "#22d3ee");                            // neon strip
-  sv.R(38, 78, 5, 9, "#ff2d55");                              // tail light
-  g.fillStyle = "#facc15";                                    // "E-BIKE" label on the body
+  if (!noShadow) {                                            // cyan neon glow under it
+    const glow = g.createRadialGradient(130, GROUND, 0, 130, GROUND, 120);
+    glow.addColorStop(0, "rgba(34,211,238,0.55)");
+    glow.addColorStop(1, "rgba(34,211,238,0)");
+    g.fillStyle = glow;
+    g.fillRect(10, GROUND - 25, 240, 30);
+  }
+  sv.shadow(30, 236);
+  const W1 = 70, W2 = 212;
+  const black = sv.grad(60, 112, [[0, "#3f3f46"], [0.3, "#18181b"], [1, "#050505"]]);
+  // roof: rounded, gold edge, neon strip underneath
+  sv.path(black, (c) => {
+    c.moveTo(30, 28); c.quadraticCurveTo(30, 17, 44, 17); c.lineTo(186, 17);
+    c.quadraticCurveTo(202, 17, 204, 28);
+  });
+  sv.R(30, 27, 174, 2, "#facc15");
+  sv.R(32, 29, 170, 1.5, "#22d3ee");
+  sv.R(100, 15, 30, 2, "#facc15");
+  // rear canopy post (curved) and a gold grab bar
+  sv.line("#0a0a0a", 5, (c) => { c.moveTo(38, 66); c.quadraticCurveTo(34, 44, 40, 28); });
+  sv.line("#facc15", 1.2, (c) => { c.moveTo(40, 66); c.quadraticCurveTo(36, 44, 42, 28); });
+  sv.line("#d4a017", 2, (c) => { c.moveTo(70, 44); c.lineTo(150, 44); });
+  // red leather seat with stitching
+  sv.path("#7f1d1d", (c) => { c.moveTo(52, 64); c.lineTo(52, 36); c.quadraticCurveTo(52, 32, 58, 32); c.lineTo(64, 32); c.lineTo(66, 64); });
+  sv.path("#991b1b", (c) => { c.moveTo(60, 64); c.lineTo(128, 64); c.quadraticCurveTo(130, 57, 124, 56); c.lineTo(64, 56); });
+  sv.line("#fca5a5", 0.8, (c) => { c.moveTo(58, 40); c.lineTo(58, 60); c.moveTo(66, 60); c.lineTo(124, 60); });
+  // the body pod
+  sv.path(black, (c) => {
+    c.moveTo(30, 108); c.lineTo(27, 84); c.quadraticCurveTo(27, 64, 46, 64); c.lineTo(146, 64);
+    c.quadraticCurveTo(160, 64, 160, 78); c.lineTo(160, 104); c.quadraticCurveTo(158, 109, 150, 109);
+  });
+  sv.line("#facc15", 1.5, (c) => { c.moveTo(46, 68); c.lineTo(148, 68); });
+  sv.line("#facc15", 1.5, (c) => { c.moveTo(32, 101); c.lineTo(158, 101); });
+  sv.P("#facc15", [64, 92, 100, 84, 92, 90, 128, 86, 118, 95, 64, 96]);   // gold flames
+  g.fillStyle = "#facc15";
   g.font = "900 11px 'Trebuchet MS', sans-serif";
   g.textAlign = "center";
-  g.fillText("E-BIKE", 150, 87);
-  sv.R(78, 58, 46, 14, "#7f1d1d");                            // red leather seat
-  sv.R(78, 40, 9, 30, "#7f1d1d");
-  sv.R(80, 64, 42, 1, "#fca5a5");
-  sv.R(46, 24, 5, 50, "#0a0a0a");                             // canopy posts
-  sv.R(168, 26, 5, 48, "#0a0a0a");
-  sv.R(47, 24, 2, 50, "#facc15");
-  sv.P("#0a0a0a", [38, 20, 182, 20, 190, 28, 36, 28]);        // roof
-  sv.R(36, 28, 154, 2, "#facc15");
-  sv.P("#0a0a0a", [30, 18, 44, 18, 40, 24, 28, 24]);          // spoiler
-  sv.P("#facc15", [104, 20, 106, 12, 110, 16, 114, 10, 118, 16, 122, 12, 124, 20]);   // crown
-  sv.P("rgba(15,23,42,0.85)", [170, 28, 190, 28, 206, 70, 174, 70]);   // front glass
-  sv.P("rgba(255,255,255,0.3)", [182, 32, 186, 32, 196, 64, 192, 64]);
-  sv.R(204, 70, 5, 30, "#facc15");                            // front fork
-  sv.R(196, 66, 18, 4, "#facc15");                            // handlebar
-  const head = g.createRadialGradient(214, 76, 0, 214, 76, 20);   // headlight glow
-  head.addColorStop(0, "rgba(253,230,138,0.9)");
-  head.addColorStop(1, "rgba(253,230,138,0)");
-  g.fillStyle = head;
-  g.fillRect(194, 56, 40, 40);
-  sv.C(212, 76, 4, "#fde68a");
-  sv.wheel(72, 15, "#d4a017", 6);
-  sv.wheel(210, 14, "#d4a017", 6);
+  g.textBaseline = "middle";
+  svText("E-BIKE", 132, 79);
+  sv.P("#facc15", [44, 82, 56, 82, 58, 74, 53, 78, 50, 72, 47, 78, 42, 74]);   // crown badge
+  sv.path("#ff2d55", (c) => { c.moveTo(27, 80); c.lineTo(32, 80); c.lineTo(32, 92); c.lineTo(28, 92); });   // tail light
+  sv.R(34, 106, 124, 2, "#22d3ee");                           // neon strip
+  // footboard
+  sv.path("#27272a", (c) => { c.moveTo(156, 95); c.lineTo(194, 95); c.lineTo(196, 104); c.lineTo(156, 104); });
+  sv.R(156, 94, 38, 1.5, "#d4d4d8");
+  // front cowl with the headlight
+  sv.path(black, (c) => {
+    c.moveTo(186, 98); c.quadraticCurveTo(190, 70, 204, 66); c.quadraticCurveTo(220, 64, 221, 80);
+    c.lineTo(220, 96); c.quadraticCurveTo(214, 103, 200, 103);
+  });
+  sv.line("#facc15", 1.2, (c) => { c.moveTo(192, 76); c.quadraticCurveTo(204, 68, 218, 72); });
+  sv.C(219, 80, 3.5, "#fef9c3");
+  // curved windshield from the roof down to the cowl
+  sv.path(sv.grad(28, 70, [[0, "rgba(51,65,85,0.95)"], [1, "rgba(15,23,42,0.9)"]]), (c) => {
+    c.moveTo(188, 29); c.bezierCurveTo(200, 40, 205, 56, 204, 67); c.lineTo(197, 69);
+    c.bezierCurveTo(197, 56, 193, 42, 182, 29);
+  });
+  sv.line("rgba(255,255,255,0.35)", 1.5, (c) => { c.moveTo(192, 34); c.quadraticCurveTo(199, 48, 199, 62); });
+  sv.line("#0a0a0a", 3, (c) => { c.moveTo(188, 29); c.bezierCurveTo(200, 40, 205, 56, 204, 67); });   // windshield frame
+  // handlebar and fork in gold
+  sv.line("#facc15", 2.5, (c) => { c.moveTo(204, 68); c.lineTo(194, 58); });
+  sv.R(191, 56, 5, 3, "#111111");
+  sv.line("#facc15", 3, (c) => { c.moveTo(212, 84); c.lineTo(212, 104); });
+  sv.arch(W1, 16, "#27272a");
+  sv.alloy(W1, 16, "#d4a017", 6, null);
+  sv.alloy(W2, 14, "#d4a017", 6, null);
 }
 
-// Draws the chosen vehicle's side view into the garage picture
-function drawPreview(pt) {
-  const pw = previewCanvas.width, ph = previewCanvas.height;
-  g.clearRect(0, 0, pw, ph);
-  const sky = g.createLinearGradient(0, 0, 0, ph);
-  sky.addColorStop(0, "#1e293b");
-  sky.addColorStop(1, "#334155");
-  g.fillStyle = sky;
-  g.fillRect(0, 0, pw, ph);
-  g.fillStyle = "#475569";                           // the road
-  g.fillRect(0, GROUND, pw, ph - GROUND);
-  g.fillStyle = "#e2e8f0";
-  for (let i = 0; i < 5; i++) g.fillRect(6 + i * 60, GROUND + 10, 30, 3);
-  const col = PLAYER_COLORS[carChoice];
-  if (pt.id === "electric") sideElectric(col);
-  else if (pt.id === "muscle") sideMuscle(col);
-  else if (pt.id === "jeepney") sideJeepney();
-  else if (pt.id === "hari") sideHari();
-  else sideSports(col);
+// ===== GARAGE TURNTABLE (the car spins 360° on the home screen) =====
+// A 2D picture can't really turn, so we cheat like old 3D games did:
+// the car is a box with 4 faces (back, front, left side, right side).
+// We draw each face as a flat picture, then squeeze and slant it to where
+// that face would be at the current angle. Only faces that point at you are drawn.
+
+// --- Front views (the game only needed back views before) ---
+// Same units as the back views: x from -0.5 to 0.5, y goes up (negative).
+function frontLights(R, P, C, y0, h, col) {          // headlights on both sides
+  R(-0.47, y0, 0.2, h, "#fef9c3");
+  R(0.27, y0, 0.2, h, "#fef9c3");
+  R(-0.47, y0 + h - 0.012, 0.2, 0.012, "#fde047");
+  R(0.27, y0 + h - 0.012, 0.2, 0.012, "#fde047");
 }
+function frontSports(x, y, w, col) {
+  const { R, P, C, T, shade } = painter(x, y, w);
+  tire(R, -0.5, -0.15, 0.17, 0.15);
+  tire(R, 0.33, -0.15, 0.17, 0.15);
+  P(col.body, [-0.5, -0.12, 0.5, -0.12, 0.53, -0.2, 0.5, -0.29, -0.5, -0.29, -0.53, -0.2]);
+  shade(-0.53, -0.29, 1.06, 0.17);
+  P("#111111", [-0.42, -0.05, 0.42, -0.05, 0.46, -0.12, -0.46, -0.12]);   // front splitter
+  P("#0b0b0b", [-0.2, -0.2, 0.2, -0.2, 0.17, -0.13, -0.17, -0.13]);       // big middle intake
+  for (let i = 0; i < 5; i++) R(-0.16 + i * 0.075, -0.195, 0.012, 0.06, "#27272a");
+  P("#0b0b0b", [-0.46, -0.2, -0.27, -0.2, -0.3, -0.13, -0.44, -0.13]);    // side intakes
+  P("#0b0b0b", [0.46, -0.2, 0.27, -0.2, 0.3, -0.13, 0.44, -0.13]);
+  P("#e0f2fe", [-0.5, -0.28, -0.25, -0.27, -0.29, -0.235, -0.49, -0.235]);   // sharp LED headlights
+  P("#e0f2fe", [0.5, -0.28, 0.25, -0.27, 0.29, -0.235, 0.49, -0.235]);
+  R(-0.45, -0.262, 0.14, 0.008, "#38bdf8");
+  R(0.31, -0.262, 0.14, 0.008, "#38bdf8");
+  R(-0.07, -0.29, 0.045, 0.17, "rgba(255,255,255,0.85)");
+  R(0.025, -0.29, 0.045, 0.17, "rgba(255,255,255,0.85)");
+  C(0, -0.22, 0.025, "#facc15");                       // badge
+}
+function frontElectric(x, y, w, col) {
+  const { R, P } = painter(x, y, w);
+  tire(R, -0.48, -0.14, 0.15, 0.14);
+  tire(R, 0.33, -0.14, 0.15, 0.14);
+  R(-0.5, -0.36, 1, 0.24, col.body);
+  R(-0.48, -0.31, 0.96, 0.02, "#e0f2fe");                // full-width light bar
+  R(-0.48, -0.312, 0.96, 0.006, "#ffffff");
+  R(-0.3, -0.2, 0.6, 0.05, col.dark);                     // closed grille (no engine!)
+  P("#e0f2fe", [0.01, -0.27, -0.02, -0.235, 0, -0.235, -0.01, -0.21, 0.022, -0.245, 0.002, -0.245]);   // ⚡
+  R(-0.44, -0.14, 0.88, 0.03, "#38bdf8");
+  P(col.top, [-0.5, -0.36, 0.5, -0.36, 0.44, -0.42, -0.44, -0.42]);
+  P("#1e293b", [-0.38, -0.42, 0.38, -0.42, 0.3, -0.62, -0.3, -0.62]);   // big glass
+  P(GLASS, [-0.16, -0.43, -0.08, -0.43, -0.13, -0.61, -0.2, -0.61]);
+  R(-0.55, -0.45, 0.07, 0.05, col.body);
+  R(0.48, -0.45, 0.07, 0.05, col.body);
+}
+function frontMuscle(x, y, w, col) {
+  const { R, P, C } = painter(x, y, w);
+  tire(R, -0.5, -0.16, 0.18, 0.16);
+  tire(R, 0.32, -0.16, 0.18, 0.16);
+  R(-0.5, -0.2, 1, 0.06, "#d7dde2");                      // chrome bumper
+  R(-0.5, -0.38, 1, 0.18, col.body);
+  R(-0.34, -0.35, 0.68, 0.12, "#111111");                 // big black grille
+  for (let i = 0; i < 6; i++) R(-0.32, -0.34 + i * 0.02, 0.64, 0.006, "#4b5563");
+  for (const hx of [-0.42, 0.42]) {                       // round headlights in chrome
+    C(hx, -0.29, 0.06, "#d7dde2");
+    C(hx, -0.29, 0.045, "#fef9c3");
+  }
+  C(0, -0.29, 0.025, "#d4a017");                          // gold badge
+  R(-0.09, -0.38, 0.05, 0.18, "#ffffff");
+  R(0.04, -0.38, 0.05, 0.18, "#ffffff");
+  P(col.top, [-0.5, -0.38, 0.5, -0.38, 0.44, -0.44, -0.44, -0.44]);
+  P("#111111", [-0.1, -0.44, 0.1, -0.44, 0.08, -0.48, -0.08, -0.48]);   // hood scoop
+  P("#1f2a33", [-0.32, -0.46, 0.32, -0.46, 0.28, -0.62, -0.28, -0.62]);
+  P(GLASS, [-0.14, -0.47, -0.06, -0.47, -0.1, -0.61, -0.18, -0.61]);
+  P(col.top, [-0.32, -0.62, 0.32, -0.62, 0.28, -0.66, -0.28, -0.66]);
+}
+function frontJeepney(x, y, w) {
+  const look = JEEP_COLORS[0];
+  const { R, P, C, shade } = painter(x, y, w);
+  tire(R, -0.46, -0.22, 0.14, 0.22);
+  tire(R, 0.32, -0.22, 0.14, 0.22);
+  P(look.body, [-0.52, -0.22, -0.3, -0.22, -0.3, -0.5, -0.38, -0.56, -0.52, -0.5]);   // fenders
+  P(look.body, [0.52, -0.22, 0.3, -0.22, 0.3, -0.5, 0.38, -0.56, 0.52, -0.5]);
+  shade(-0.52, -0.56, 1.04, 0.34);
+  R(-0.31, -0.6, 0.62, 0.36, "#e2e8f0");               // tall chrome grille
+  shade(-0.31, -0.6, 0.62, 0.36);
+  for (let i = 0; i < 11; i++) R(-0.28 + i * 0.053, -0.57, 0.026, 0.3, "#8b949c");
+  R(-0.31, -0.6, 0.62, 0.025, "#f8fafc");
+  for (const hx of [-0.41, 0.41]) {                    // round headlights in chrome rings
+    C(hx, -0.44, 0.07, "#e5e7eb");
+    C(hx, -0.44, 0.052, "#fef9c3");
+    C(hx - 0.015, -0.455, 0.015, "#ffffff");
+  }
+  R(-0.54, -0.26, 1.08, 0.06, "#d7dde2");              // chrome bumper
+  R(-0.54, -0.26, 1.08, 0.012, "#ffffff");
+  R(-0.12, -0.25, 0.24, 0.05, "#f9d71c");              // plate
+}
+function frontHari(x, y, w) {
+  const { R, P, C, shade } = painter(x, y, w);
+  R(-0.07, -0.22, 0.14, 0.22, TIRE);                   // ONE front wheel in the middle
+  R(-0.04, -0.19, 0.08, 0.16, "#d4a017");
+  R(-0.11, -0.4, 0.03, 0.22, "#facc15");               // gold fork
+  R(0.08, -0.4, 0.03, 0.22, "#facc15");
+  P("#141414", [-0.2, -0.3, 0.2, -0.3, 0.22, -0.48, 0.14, -0.55, -0.14, -0.55, -0.22, -0.48]);   // narrow cowl
+  shade(-0.22, -0.55, 0.44, 0.25);
+  C(0, -0.42, 0.075, "rgba(253,230,138,0.5)");          // headlight
+  C(0, -0.42, 0.05, "#fef9c3");
+  R(-0.18, -0.33, 0.36, 0.015, "#22d3ee");
+  R(-0.32, -0.56, 0.64, 0.025, "#facc15");              // handlebar
+  R(-0.36, -0.575, 0.06, 0.04, "#111111");
+  R(0.3, -0.575, 0.06, 0.04, "#111111");
+  R(-0.5, -0.22, 0.12, 0.16, TIRE);                    // the two back wheels peeking out
+  R(0.38, -0.22, 0.12, 0.16, TIRE);
+  P("#141414", [-0.5, -0.24, -0.3, -0.24, -0.32, -0.5, -0.48, -0.5]);   // sides of the body behind
+  P("#141414", [0.5, -0.24, 0.3, -0.24, 0.32, -0.5, 0.48, -0.5]);
+  R(-0.48, -0.5, 0.18, 0.015, "#facc15");
+  R(0.3, -0.5, 0.18, 0.015, "#facc15");
+}
+function drawFrontVehicle(pt, x, y, w) {
+  const col = PLAYER_COLORS[carChoice];
+  if (pt.id === "electric") frontElectric(x, y, w, col);
+  else if (pt.id === "muscle") frontMuscle(x, y, w, col);
+  else if (pt.id === "jeepney") frontJeepney(x, y, w);
+  else if (pt.id === "hari") frontHari(x, y, w);
+  else frontSports(x, y, w, col);
+}
+
+// --- Make the 4 face pictures once (again only when the car or color changes) ---
+const FACE_W = 300, FACE_H = 150;
+function makeFaceCanvas() {
+  const c = document.createElement("canvas");
+  c.width = FACE_W;
+  c.height = FACE_H;
+  return c;
+}
+// Finds the left, right and top edges of what was drawn (by looking at see-through pixels)
+function measure(c) {
+  const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+  let x0 = c.width, x1 = 0, y0 = c.height;
+  for (let y = 0; y < c.height; y++) {
+    for (let x = 0; x < c.width; x++) {
+      if (d[(y * c.width + x) * 4 + 3] > 40) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+      }
+    }
+  }
+  return { x0, x1: x1 + 1, y0 };
+}
+let faces = null, facesKey = "";
+function buildFaces(pt) {
+  const key = pt.id + carChoice;
+  if (key === facesKey) return faces;
+  facesKey = key;
+  const col = PLAYER_COLORS[carChoice];
+  // 1) side view (drawn by the old garage functions, which paint on "g")
+  const side = makeFaceCanvas(), sideL = makeFaceCanvas();
+  const keepG = g;
+  noShadow = true;                                       // no shadow or glow on the face pictures
+  for (const [c, flip] of [[side, false], [sideL, true]]) {
+    g = c.getContext("2d");
+    svFlip = flip;
+    if (flip) { g.translate(FACE_W, 0); g.scale(-1, 1); }   // mirror for the other side
+    if (pt.id === "electric") sideElectric(col);
+    else if (pt.id === "muscle") sideMuscle(col);
+    else if (pt.id === "jeepney") sideJeepney();
+    else if (pt.id === "hari") sideHari();
+    else sideSports(col);
+  }
+  g = keepG;
+  svFlip = false;
+  noShadow = false;
+  // 2) back and front views (drawn by the road painters, which paint on "ctx").
+  // x is set to the middle of the game screen so no extra side panel is added.
+  const back = makeFaceCanvas(), front = makeFaceCanvas();
+  const keepCtx = ctx;
+  noShadow = true;
+  for (const [c, fn] of [[back, drawPlayerVehicle], [front, drawFrontVehicle]]) {
+    ctx = c.getContext("2d");
+    ctx.translate(FACE_W / 2 - W / 2, 0);
+    ctx.beginPath();
+    ctx.rect(W / 2 - FACE_W / 2, 0, FACE_W, GROUND);     // nothing below the ground line
+    ctx.clip();
+    fn(pt, W / 2, GROUND, 100);
+  }
+  ctx = keepCtx;
+  noShadow = false;
+  // 3) measure them so all faces are the same height (same scale)
+  const ms = measure(side), mb = measure(back), mf = measure(front);
+  const sideH = GROUND - ms.y0;
+  const k = sideH / (GROUND - mb.y0);                    // back/front are scaled by k
+  faces = {
+    side, sideL, back, front,
+    sx0: ms.x0, sx1: ms.x1,                              // where the side picture starts/ends
+    // back and front are drawn the same size and centered, so they share one left/right range
+    // (that keeps a narrow front, like the e-bike's, narrow instead of stretching it)
+    bx0: Math.min(mb.x0, mf.x0), bx1: Math.max(mb.x1, mf.x1),
+    fx0: Math.min(mb.x0, mf.x0), fx1: Math.max(mb.x1, mf.x1), k,
+    len: ms.x1 - ms.x0,                                  // car length (pixels)
+    wid: (Math.max(mb.x1, mf.x1) - Math.min(mb.x0, mf.x0)) * k,   // car width (pixels)
+    h: sideH,
+  };
+  return faces;
+}
+
+// --- The garage room (drawn every frame behind the car) ---
+let spin = 0.6;            // the car's angle (radians)
+let spinHold = 0;          // after you drag the car, wait a bit before auto-spinning again
+let lastGarage = 0;
+function drawGarageRoom(c, pw, ph) {
+  const floorY = ph * 0.6;
+  // back wall: painted concrete with a darker bottom
+  const wall = c.createLinearGradient(0, 0, 0, floorY);
+  wall.addColorStop(0, "#2a3442");
+  wall.addColorStop(1, "#3c4756");
+  c.fillStyle = wall;
+  c.fillRect(0, 0, pw, floorY);
+  // roll-up door in the middle (metal slats)
+  const dx = pw * 0.3, dw = pw * 0.4, dy = ph * 0.12;
+  c.fillStyle = "#56616f";
+  c.fillRect(dx, dy, dw, floorY - dy);
+  c.fillStyle = "#47515e";
+  for (let y = dy + 6; y < floorY; y += 9) c.fillRect(dx, y, dw, 2);
+  c.fillStyle = "#1f2732";
+  c.fillRect(dx - 5, dy - 5, dw + 10, 6);
+  c.fillRect(dx - 5, dy, 5, floorY - dy);
+  c.fillRect(dx + dw, dy, 5, floorY - dy);
+  // sign above the door with jeepney stripes
+  const sw = dw * 0.9, sx = pw / 2 - sw / 2, sy = 4;
+  c.fillStyle = "#0f172a";
+  c.fillRect(sx, sy, sw, dy - 10);
+  const stripe = ["#d62828", "#f9c80e", "#1d4fbf"];
+  for (let i = 0; i < 18; i++) {
+    c.fillStyle = stripe[i % 3];
+    c.fillRect(sx + (i * sw) / 18, sy + dy - 13, sw / 18, 3);
+  }
+  c.fillStyle = "#f9c80e";
+  c.font = `900 ${Math.round(ph * 0.065)}px 'Trebuchet MS', sans-serif`;
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.fillText("KASKASERO GARAGE", pw / 2, sy + (dy - 13) / 2);
+  // left: pegboard with tools
+  c.fillStyle = "#8a6a45";
+  c.fillRect(pw * 0.04, ph * 0.14, pw * 0.21, ph * 0.3);
+  c.fillStyle = "#6f5536";
+  for (let y = ph * 0.17; y < ph * 0.43; y += 7) for (let x = pw * 0.055; x < pw * 0.245; x += 7) c.fillRect(x, y, 1.5, 1.5);
+  c.fillStyle = "#cbd5e1";                       // wrench, hammer, screwdriver
+  c.fillRect(pw * 0.07, ph * 0.19, 3, ph * 0.16);
+  c.beginPath(); c.arc(pw * 0.07 + 1.5, ph * 0.19, 5, 0, Math.PI * 2); c.fill();
+  c.fillStyle = "#d62828";
+  c.fillRect(pw * 0.12, ph * 0.18, 4, ph * 0.17);
+  c.fillStyle = "#94a3b8";
+  c.fillRect(pw * 0.105, ph * 0.18, 18, 7);
+  c.fillStyle = "#f9c80e";
+  c.fillRect(pw * 0.18, ph * 0.2, 5, ph * 0.08);
+  c.fillStyle = "#cbd5e1";
+  c.fillRect(pw * 0.181, ph * 0.28, 3, ph * 0.08);
+  // right: red tool cabinet
+  const tx = pw * 0.78, tw = pw * 0.17, ty = floorY - ph * 0.3;
+  c.fillStyle = "#b91c1c";
+  c.fillRect(tx, ty, tw, ph * 0.3);
+  c.fillStyle = "#7f1d1d";
+  for (let i = 1; i < 5; i++) c.fillRect(tx + 3, ty + (i * ph * 0.3) / 5, tw - 6, 2);
+  c.fillStyle = "#e5e7eb";
+  for (let i = 0; i < 5; i++) c.fillRect(tx + tw / 2 - 6, ty + 5 + (i * ph * 0.3) / 5, 12, 2);
+  // a stack of tires on the left
+  for (let i = 0; i < 3; i++) {
+    const ty2 = floorY - 2 - i * 11;
+    c.fillStyle = "#111827";
+    c.beginPath(); c.ellipse(pw * 0.1, ty2, 22, 7, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#374151";
+    c.beginPath(); c.ellipse(pw * 0.1, ty2 - 2, 22, 6, 0, 0, Math.PI); c.fill();
+  }
+  // floor: shiny grey with yellow safety lines
+  const floor = c.createLinearGradient(0, floorY, 0, ph);
+  floor.addColorStop(0, "#4b5563");
+  floor.addColorStop(1, "#1f2937");
+  c.fillStyle = floor;
+  c.fillRect(0, floorY, pw, ph - floorY);
+  c.strokeStyle = "rgba(250,204,21,0.8)";
+  c.lineWidth = 3;
+  c.beginPath();
+  c.moveTo(pw * 0.08, ph); c.lineTo(pw * 0.2, floorY);
+  c.moveTo(pw * 0.92, ph); c.lineTo(pw * 0.8, floorY);
+  c.stroke();
+  // hanging light: a lamp with a cone of light on the car
+  c.fillStyle = "#111827";
+  c.fillRect(pw / 2 - 1, 0, 2, 4);
+  const cone = c.createLinearGradient(0, 0, 0, ph);
+  cone.addColorStop(0, "rgba(255,248,220,0.28)");
+  cone.addColorStop(1, "rgba(255,248,220,0.02)");
+  c.fillStyle = cone;
+  c.beginPath();
+  c.moveTo(pw / 2 - 14, 0); c.lineTo(pw / 2 + 14, 0);
+  c.lineTo(pw / 2 + pw * 0.34, ph); c.lineTo(pw / 2 - pw * 0.34, ph);
+  c.fill();
+}
+
+// Draws one face: its bottom-left goes to point A, bottom-right to point B.
+// Slanting the picture like this makes it look like it's at an angle.
+function drawFace(c, img, x0, x1, A, B, s, keep = 0) {
+  const iw = x1 - x0;
+  const top = keep ? GROUND - keep : 0;                // keep = only the bottom part (cars' front/back)
+  c.save();
+  c.setTransform((B.x - A.x) / iw, (B.y - A.y) / iw, 0, s, A.x, A.y);
+  c.drawImage(img, x0, top, iw, GROUND - top, 0, top - GROUND, iw, GROUND - top);
+  c.restore();
+}
+
+function drawGarage(pt) {
+  const pc = previewCanvas, c = g;
+  const pw = pc.width, ph = pc.height;
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  drawGarageRoom(c, pw, ph);
+  const f = buildFaces(pt);
+  const cx = pw / 2, gy = ph * 0.8;
+  const s = Math.min((pw * 0.62) / f.len, (ph * 0.5) / f.h);   // fit the car in the picture
+  const tilt = 0.18;                                   // we look down a little: far points go up
+  // turntable: chrome ring + dark disc with marks that turn with the car
+  const tr = pw * 0.36;
+  c.fillStyle = "#94a3b8";
+  c.beginPath(); c.ellipse(cx, gy + 3, tr + 5, (tr + 5) * tilt, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = "#1e293b";
+  c.beginPath(); c.ellipse(cx, gy, tr, tr * tilt, 0, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = "rgba(250,204,21,0.6)";
+  c.lineWidth = 2;
+  for (let i = 0; i < 8; i++) {
+    const a = spin + (i * Math.PI) / 4;
+    c.beginPath();
+    c.moveTo(cx + Math.cos(a) * tr * 0.82, gy + Math.sin(a) * tr * 0.82 * tilt);
+    c.lineTo(cx + Math.cos(a) * tr * 0.95, gy + Math.sin(a) * tr * 0.95 * tilt);
+    c.stroke();
+  }
+  // the 4 corners of the car seen from above
+  const a = (f.len * s) / 2, b = (f.wid * s) / 2;
+  const fx = Math.sin(spin), fz = -Math.cos(spin);     // the way the car points
+  const rx = -fz, rz = fx;                             // the car's right-hand side
+  const pt2 = (u, v) => {                              // u = forward, v = right
+    const X = u * fx + v * rx, Z = u * fz + v * rz;
+    return { x: cx + X, y: gy + Z * tilt, z: Z };
+  };
+  const FR = pt2(a, b), FL = pt2(a, -b), RR = pt2(-a, b), RL = pt2(-a, -b);
+  // shadow under the car
+  c.fillStyle = "rgba(0,0,0,0.45)";
+  c.beginPath();
+  c.moveTo(FR.x, FR.y); c.lineTo(FL.x, FL.y); c.lineTo(RL.x, RL.y); c.lineTo(RR.x, RR.y);
+  c.closePath();
+  c.fill();
+  // which faces point at us, and in what order to draw them (far first)
+  const list = [];
+  // Cars: the back and front pictures are cut at the body line (the 3D top above
+  // replaces their windows). Boxy vehicles keep the whole picture.
+  const pr = PROFILES[pt.id] || {};
+  const keepPart = (b) => (b && b < 1 ? b * f.h / f.k : 0);   // how much of the picture to keep (picture pixels)
+  const cutBack = keepPart(pr.beltB ?? pr.belt), cutFront = keepPart(pr.beltF ?? pr.belt);
+  if (fz < 0) list.push({ z: (RL.z + RR.z) / 2, d: () => drawFace(c, f.back, f.bx0, f.bx1, RL, RR, s * f.k, cutBack) });
+  if (fz > 0) list.push({ z: (FR.z + FL.z) / 2, d: () => drawFace(c, f.front, f.fx0, f.fx1, FR, FL, s * f.k, cutFront) });
+  if (rz > 0) list.push({ z: (RR.z + FR.z) / 2, d: () => drawFace(c, f.side, f.sx0, f.sx1, RR, FR, s) });
+  if (rz < 0) list.push({ z: (FL.z + RL.z) / 2, d: () => drawFace(c, f.sideL, FACE_W - f.sx1, FACE_W - f.sx0, FL, RL, s) });
+  list.sort((p, q) => p.z - q.z);
+  // Seen from a little above, the top of the car shows: the body ("deck") and the roof.
+  // u = along the car (-1 back, 1 front), v = across, h = how high (part of the car's height)
+  const top = (u0, u1, v, hh, color) => {
+    const lift = hh * f.h * s;
+    const q = [pt2(u1 * a, v * b), pt2(u1 * a, -v * b), pt2(u0 * a, -v * b), pt2(u0 * a, v * b)];
+    c.fillStyle = color;
+    c.beginPath();
+    q.forEach((p, i) => (i ? c.lineTo(p.x, p.y - lift) : c.moveTo(p.x, p.y - lift)));
+    c.closePath();
+    c.fill();
+  };
+  const col = PLAYER_COLORS[carChoice];
+  const prof = PROFILES[pt.id];
+  if (prof) {
+    // CARS: the top is made of pieces along the car (trunk, rear window, roof,
+    // windshield, hood). Each piece has a height at its back end and at its front end,
+    // so windows slope like on a real car.
+    const glassC = "#1f2a33";
+    const paint = { body: col.body, top: col.top, glass: glassC, dark: "#1e293b", ...(prof.paint ? prof.paint() : {}) };
+    const quad = (u0, u1, h0, h1, v0, v1) => {         // 4 corners of one piece, lifted to its heights
+      const P = (u, v, hh) => { const q = pt2(u * a, v * b); return { x: q.x, y: q.y - hh * f.h * s, z: q.z }; };
+      return [P(u1, v1, h1), P(u1, -v1, h1), P(u0, -v0, h0), P(u0, v0, h0)];
+    };
+    const area = (q) => {                              // + or - tells which way a piece is facing
+      let A = 0;
+      for (let i = 0; i < 4; i++) { const p1 = q[i], p2 = q[(i + 1) % 4]; A += p1.x * p2.y - p2.x * p1.y; }
+      return A;
+    };
+    const ref = Math.sign(area(quad(-1, 1, 0, 0, 1, 1))) || 1;   // the direction "facing up" looks like now
+    const fill = (q, color) => {
+      c.fillStyle = color;
+      c.beginPath();
+      q.forEach((p, i) => (i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)));
+      c.closePath();
+      c.fill();
+    };
+    // the body top under everything (so there are no holes)
+    const [d0, d1] = prof.deck || [-0.98, 0.98];
+    fill(quad(d0, d1, prof.belt, prof.belt, 0.96, 0.96), paint.top);
+    const pieces = prof.pieces.map(([u0, u1, h0, h1, v0, v1, kind], i) => {
+      const q = quad(u0, u1, h0, h1, v0, v1);
+      return { q, kind, z: q.reduce((m, p) => m + p.z, 0) / 4 + i * 0.001 };   // (+ a tiny bit keeps the list order on ties)
+    }).filter((pc) => Math.sign(area(pc.q)) === ref);   // skip pieces that face away from us
+    pieces.sort((p1, p2) => p1.z - p2.z);              // far pieces first
+    for (const pc of pieces) {
+      fill(pc.q, paint[pc.kind]);
+      if (pc.kind === "glass") {                       // a light shine line across the glass
+        const m = (p1, p2, t) => ({ x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t });
+        const A = m(pc.q[0], pc.q[1], 0.25), B = m(pc.q[0], pc.q[1], 0.38), C = m(pc.q[3], pc.q[2], 0.3), D = m(pc.q[3], pc.q[2], 0.17);
+        c.fillStyle = "rgba(255,255,255,0.28)";
+        c.beginPath(); c.moveTo(A.x, A.y); c.lineTo(B.x, B.y); c.lineTo(C.x, C.y); c.lineTo(D.x, D.y); c.fill();
+      }
+    }
+    for (const item of list) item.d();
+    return;
+  }
+  // JEEPNEY and HARI are boxy: a flat roof on top is enough.
+  // The tops go first and the faces after, so the windshield and windows
+  // (which are part of the faces) are never covered by the roof.
+  const R = ROOFS[pt.id];
+  const deckC = pt.id === "jeepney" ? JEEP_COLORS[0].body : "#141414";
+  const roofC = pt.id === "jeepney" ? JEEP_COLORS[0].roof : "#0a0a0a";
+  top(-0.98, 0.98, 0.96, R.deck, deckC);
+  top(R.r0, R.r1, R.rv, R.roof, roofC);
+  if (pt.id === "jeepney") top(R.r0, R.r1, R.rv * 0.35, R.roof + 0.004, JEEP_COLORS[0].band);   // colored band
+  if (pt.id === "hari") top(R.r0 + 0.1, R.r1 - 0.1, 0.12, R.roof + 0.004, "#facc15");   // gold roof stripe
+  for (const item of list) item.d();
+}
+// The shape of each car's top, measured from its side picture.
+// Each piece: [back u, front u, height at back, height at front, half-width at back, at front, color]
+// u: -1 = rear bumper, 1 = front bumper. Heights are parts of the car's full height.
+const PROFILES = {
+  sports: { belt: 0.6, deck: [-0.31, 0.6], pieces: [
+    [-0.95, -0.31, 0.6, 0.63, 0.96, 0.96, "top"],        // trunk
+    [-0.31, 0.155, 0.62, 0.97, 0.72, 0.58, "glass"],     // rear window (fastback)
+    [0.155, 0.33, 0.98, 0.98, 0.58, 0.58, "body"],       // roof
+    [0.33, 0.6, 0.98, 0.67, 0.58, 0.74, "glass"],        // windshield
+    [0.6, 0.97, 0.67, 0.53, 0.96, 0.9, "top"],           // hood
+    [-0.99, -0.82, 0.78, 0.77, 1.02, 1.02, "dark"],      // rear wing
+  ]},
+  electric: { belt: 0.56, pieces: [
+    [-1, -0.4, 0.58, 0.63, 0.96, 0.96, "top"],
+    [-0.4, -0.12, 0.63, 0.97, 0.72, 0.6, "glass"],
+    [-0.12, 0.38, 0.97, 0.97, 0.6, 0.6, "glass"],        // all-glass roof
+    [0.38, 0.67, 0.97, 0.68, 0.6, 0.74, "glass"],
+    [0.67, 1, 0.68, 0.5, 0.96, 0.9, "top"],
+  ]},
+  muscle: { belt: 0.6, pieces: [
+    [-1, -0.38, 0.6, 0.66, 0.96, 0.96, "top"],
+    [-0.38, -0.19, 0.66, 1, 0.7, 0.6, "glass"],
+    [-0.19, 0.16, 1, 1, 0.6, 0.6, "body"],
+    [0.16, 0.32, 1, 0.68, 0.6, 0.72, "glass"],
+    [0.32, 1, 0.68, 0.6, 0.96, 0.92, "top"],             // long hood
+    [0.62, 0.8, 0.69, 0.66, 0.12, 0.12, "dark"],         // hood scoop
+  ]},
+  // Jeepney: the back is a full box (keep the whole back picture), the front has a long hood
+  jeepney: { belt: 0.48, beltB: 1, beltF: 0.48,
+    paint: () => ({ top: JEEP_COLORS[0].body, body: JEEP_COLORS[0].body, roof: JEEP_COLORS[0].roof,
+      band: JEEP_COLORS[0].band, stripe: JEEP_COLORS[0].stripe, chrome: "#d7dde2" }),
+    pieces: [
+      [-0.96, 0.58, 0.96, 0.96, 0.99, 0.99, "roof"],     // long roof
+      [-0.96, 0.58, 0.965, 0.965, 0.32, 0.32, "band"],   // yellow band on the roof
+      [-0.96, 0.58, 0.97, 0.97, 0.1, 0.1, "stripe"],     // blue line in the middle
+      [0.5, 0.82, 0.41, 0.41, 0.99, 0.99, "body"],       // front fenders
+      [0.555, 0.63, 0.86, 0.49, 0.85, 0.85, "glass"],    // windshield
+      [0.62, 0.95, 0.48, 0.42, 0.62, 0.62, "chrome"],    // long chrome hood
+    ]},
+  // Hari ng Daan: canopy roof, curved windshield and a narrow front cowl
+  hari: { belt: 0.53, beltB: 1, beltF: 0.53,
+    paint: () => ({ top: "#141414", body: "#18181b", roof: "#18181b", gold: "#facc15", dark: "#27272a" }),
+    pieces: [
+      [0.32, 0.72, 0.24, 0.24, 0.6, 0.6, "dark"],        // footboard
+      [-0.97, 0.81, 0.98, 0.98, 1, 1, "roof"],           // canopy roof
+      [-0.6, 0.6, 0.985, 0.985, 0.1, 0.1, "gold"],       // gold stripe on the roof
+      [0.643, 0.806, 0.87, 0.5, 0.95, 0.6, "glass"],     // curved windshield
+      [0.66, 0.98, 0.51, 0.4, 0.55, 0.32, "body"],       // front cowl
+    ]},
+};
+// Where each vehicle's body top and roof are (measured from the side pictures)
+const ROOFS = {
+  sports:   { deck: 0.58, roof: 0.98, r0: -0.02, r1: 0.36, rv: 0.55 },
+  electric: { deck: 0.56, roof: 0.97, r0: -0.14, r1: 0.4, rv: 0.6, glass: true },
+  muscle:   { deck: 0.6,  roof: 0.98, r0: -0.2, r1: 0.16, rv: 0.6 },
+  jeepney:  { deck: 0.43, roof: 0.97, r0: -0.96, r1: 0.55, rv: 0.98 },
+  hari:     { deck: 0.43, roof: 0.9,  r0: -0.9, r1: 0.58, rv: 0.98 },
+};
+
+// Turns the car a little every frame while the home screen is showing
+function updateGarage(now) {
+  const homeEl = document.getElementById("home");
+  if (homeEl.classList.contains("hidden")) return;
+  const dt = Math.min(3, (now - (lastGarage || now)) / (1000 / 60));
+  lastGarage = now;
+  if (spinHold > 0) spinHold -= dt;
+  else spin += 0.012 * dt;                           // one full turn in about 9 seconds
+  drawGarage(PLAYER_TYPES[typeChoice]);
+}
+
+// Drag the car with your mouse or finger to turn it yourself
+(() => {
+  let dragX = null;
+  previewCanvas.addEventListener("pointerdown", (e) => { dragX = e.clientX; spinHold = 120; });
+  window.addEventListener("pointermove", (e) => {
+    if (dragX === null) return;
+    spin += (e.clientX - dragX) * 0.02;
+    dragX = e.clientX;
+    spinHold = 120;
+  });
+  window.addEventListener("pointerup", () => { dragX = null; });
+})();
 
 function showGarage() {
   const pt = PLAYER_TYPES[typeChoice];
   const locked = isLocked(pt);
   const nameEl = document.getElementById("car-name");
-  nameEl.textContent = (pt.id === "hari" ? "👑 " : "") + pt.name;
-  if (pt.tag) {                                   // a small badge like "E-BIKE"
+  nameEl.textContent = "";
+  if (pt.tag) {                                   // a small badge in front, like: [E-BIKE] "Hari ng Daan"
     const badge = document.createElement("span");
     badge.className = "tag";
     badge.textContent = pt.tag;
     nameEl.appendChild(badge);
+    nameEl.append(`"${pt.name}"`);                // the name in quotes after the badge
+  } else {
+    nameEl.append(pt.name);
   }
   document.getElementById("car-special").textContent = pt.special;
   const pct = (v, lo, hi) => Math.max(8, Math.min(100, ((v - lo) / (hi - lo)) * 100)) + "%";
@@ -891,7 +1808,7 @@ function showGarage() {
   document.getElementById("wallet").textContent = wallet;
   document.getElementById("play-btn").disabled = locked;
   previewCanvas.classList.toggle("locked", locked);
-  drawPreview(pt);
+  drawGarage(pt);
 }
 
 function changeType(d) {
@@ -906,10 +1823,11 @@ function unlockHari() {
   showGarage();
 }
 
-// Buy Hari ng Daan with ₱500 from your Pera
+// Buy Hari ng Daan from your Pera (the price is in PLAYER_TYPES, now ₱650)
 document.getElementById("buy-btn").addEventListener("click", () => {
-  if (wallet < 500) return;
-  wallet -= 500;
+  const price = PLAYER_TYPES.find((t) => t.id === "hari").price;
+  if (wallet < price) return;
+  wallet -= price;
   saveWallet(wallet);
   Sound.init();
   Sound.powerup();
@@ -1038,6 +1956,7 @@ const Sound = {
     rainFilter.connect(this.rainGain);
     this.rainGain.connect(this.master);
     rain.start();
+    Music.start();        // background music starts once sound is allowed
   },
 
   // Called every frame: engine pitch goes up with speed
@@ -1094,6 +2013,13 @@ const Sound = {
 
   coin()   { this.tone(988, 0.08, "square", 0.08); this.tone(1319, 0.22, "square", 0.08, null, 0.07); },
   crash()  { this.noise(0.9, 0.7, 900); this.tone(140, 0.7, "sawtooth", 0.3, 35); },
+  introHorn() {  // the intro: "beep-beep-beeeep!" plus a little engine rev
+    [[0, 0.14], [0.2, 0.14], [0.4, 0.55]].forEach(([d, len]) => {
+      this.tone(415, len, "square", 0.09, null, d);
+      this.tone(523, len, "square", 0.07, null, d);
+    });
+    this.tone(70, 0.9, "sawtooth", 0.12, 160, 0.5);
+  },
   horn()   {  // "beep-beep" from a jeepney
     for (const d of [0, 0.2]) {
       this.tone(415, 0.14, "square", 0.06, null, d);
@@ -1109,6 +2035,32 @@ const Sound = {
   nearMiss() { this.noise(0.25, 0.25, 2000, "bandpass"); this.tone(600, 0.18, "triangle", 0.1, 1200); },
   warning() { this.tone(988, 0.12, "square", 0.1); this.tone(988, 0.12, "square", 0.1, null, 0.2); },
   splash() { this.noise(0.6, 0.35, 700); this.noise(0.35, 0.15, 3000, "highpass", 0.05); },
+  // A traffic enforcer's whistle: "PRRT! PRRRRT!"
+  // A high tone whose pitch wobbles very fast (the ball rattling inside the whistle).
+  whistle() {
+    if (!this.ac) return;
+    for (const [start, len] of [[0, 0.18], [0.26, 0.5]]) {
+      const t = this.ac.currentTime + start;
+      const o = this.ac.createOscillator();
+      const wobble = this.ac.createOscillator();     // shakes the pitch 35 times a second
+      const depth = this.ac.createGain();
+      const g = this.ac.createGain();
+      o.type = "sine";
+      o.frequency.value = 2650;
+      wobble.frequency.value = 35;
+      depth.gain.value = 180;
+      wobble.connect(depth);
+      depth.connect(o.frequency);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.02);
+      g.gain.setValueAtTime(0.16, t + len - 0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      o.connect(g);
+      g.connect(this.master);
+      o.start(t); wobble.start(t);
+      o.stop(t + len + 0.05); wobble.stop(t + len + 0.05);
+    }
+  },
 
   toggleMute() {
     this.muted = !this.muted;
@@ -1118,6 +2070,210 @@ const Sound = {
   },
 };
 muteBtn.textContent = Sound.muted ? "🔇" : "🔊";
+
+// ----- 9c-2. BACKGROUND MUSIC: original loops made with the Web Audio API -----
+// A tiny "sequencer" plays one step every 16th note: drums, bass, chord
+// arpeggios and a melody. Notes are scheduled a little ahead of time, so the
+// beat stays steady even while the game is busy drawing.
+// There are 4 THEMES, and the music switches at the start of the next bar:
+//   menu  = calm and friendly (home screen, game over)
+//   drive = the upbeat jeepney-ride loop (normal driving)
+//   night = moody synth (driving at night)
+//   boss  = fast and intense (Manila, the final and hardest stretch)
+const midi = (m) => 440 * Math.pow(2, (m - 69) / 12);   // note number → frequency
+
+const THEMES = {
+  menu: {
+    BPM: 96,
+    bass:   [41, 45, 46, 48, 41, 45, 46, 48],             // F – Am – Bb – C
+    chords: [[65, 69, 72], [64, 69, 72], [65, 70, 74], [64, 67, 72],
+             [65, 69, 72], [64, 69, 72], [65, 70, 74], [64, 67, 72]],
+    melody: [
+      72, 0, 0, 69, 0, 72, 74, 0,    76, 0, 0, 72, 0, 0, 69, 0,
+      74, 0, 0, 70, 0, 74, 77, 0,    76, 0, 74, 0, 72, 0, 0, 0,
+      72, 0, 74, 0, 76, 0, 77, 0,    76, 0, 72, 0, 69, 0, 0, 0,
+      70, 0, 74, 0, 77, 0, 74, 0,    72, 0, 0, 0, 0, 0, 0, 0,
+    ],
+    kick: [0, 8], snare: [], hat: [], bassSteps: [0, 8], bassUp: [],
+    bassType: "triangle", bassVol: 0.45, bassLen: 3.5,
+    arpEvery: 2, arpType: "triangle", arpVol: 0.07, arpLen: 2.5,
+    leadType: "triangle", leadVol: 0.12, leadLen: 3,
+  },
+  drive: {
+    BPM: 132,
+    bass:   [43, 38, 40, 36, 43, 38, 40, 36],             // G – D – Em – C
+    chords: [[67, 71, 74], [62, 66, 69], [64, 67, 71], [60, 64, 67],
+             [67, 71, 74], [62, 66, 69], [64, 67, 71], [60, 64, 67]],
+    melody: [
+      79, 76, 74, 76, 79, 0, 81, 79,     74, 0, 71, 74, 76, 74, 71, 69,
+      71, 74, 76, 0, 79, 76, 74, 71,     72, 71, 69, 67, 69, 0, 71, 74,
+      79, 81, 83, 81, 79, 0, 76, 79,     81, 0, 78, 76, 74, 0, 76, 78,
+      79, 76, 74, 76, 71, 0, 74, 76,     72, 74, 76, 74, 72, 71, 69, 67,
+    ],
+    kick: [0, 4, 8, 12], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14],
+    bassSteps: [0, 3, 6, 8, 11, 14], bassUp: [6, 14],
+    bassType: "triangle", bassVol: 0.5, bassLen: 1.8,
+    arpEvery: 2, arpType: "square", arpVol: 0.05, arpLen: 1.5,
+    leadType: "square", leadVol: 0.09, leadLen: 2.2,
+  },
+  night: {
+    BPM: 116,
+    bass:   [45, 41, 48, 43, 45, 41, 48, 43],             // Am – F – C – G
+    chords: [[69, 72, 76], [65, 69, 72], [67, 72, 76], [67, 71, 74],
+             [69, 72, 76], [65, 69, 72], [67, 72, 76], [67, 71, 74]],
+    melody: [
+      76, 0, 74, 72, 0, 69, 0, 72,     72, 0, 69, 0, 65, 0, 69, 0,
+      72, 0, 74, 76, 0, 79, 0, 76,     74, 0, 71, 0, 67, 0, 0, 0,
+      81, 0, 79, 76, 0, 74, 0, 76,     77, 0, 76, 72, 0, 69, 0, 0,
+      76, 0, 79, 0, 84, 0, 79, 76,     74, 0, 71, 74, 0, 0, 0, 0,
+    ],
+    kick: [0, 4, 8, 12], snare: [4, 12], hat: [2, 6, 10, 14],
+    bassSteps: [0, 2, 4, 6, 8, 10, 12, 14], bassUp: [],    // pulsing synth bass
+    bassType: "sawtooth", bassVol: 0.16, bassLen: 1.2,
+    arpEvery: 1, arpType: "square", arpVol: 0.03, arpLen: 2,
+    leadType: "sawtooth", leadVol: 0.05, leadLen: 3,
+  },
+  boss: {
+    BPM: 152,
+    bass:   [40, 36, 38, 35, 40, 36, 38, 35],             // Em – C – D – B
+    chords: [[64, 67, 71], [60, 64, 67], [62, 66, 69], [59, 63, 66],
+             [64, 67, 71], [60, 64, 67], [62, 66, 69], [59, 63, 66]],
+    melody: [
+      76, 79, 83, 79, 76, 79, 83, 86,    84, 83, 79, 76, 72, 76, 79, 76,
+      78, 81, 86, 81, 78, 81, 86, 88,    87, 86, 83, 78, 75, 78, 83, 0,
+      76, 79, 83, 79, 76, 79, 83, 86,    84, 83, 79, 76, 72, 76, 79, 76,
+      78, 81, 86, 81, 78, 81, 86, 88,    88, 86, 83, 81, 79, 78, 76, 75,
+    ],
+    kick: [0, 3, 4, 8, 11, 12], snare: [4, 12, 14], hat: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    bassSteps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], bassUp: [2, 6, 10, 14],
+    bassType: "sawtooth", bassVol: 0.14, bassLen: 0.9,
+    arpEvery: 2, arpType: "square", arpVol: 0.04, arpLen: 1.2,
+    leadType: "square", leadVol: 0.1, leadLen: 1.6,
+  },
+};
+
+const Music = {
+  on: loadMusicOn(),
+  gain: null,
+  timer: null,
+  step: 0,
+  nextTime: 0,
+  theme: THEMES.menu,
+  themeName: "menu",
+  want: "menu",      // the theme we should switch to at the next bar
+
+  start() {
+    if (!Sound.ac || this.timer) return;
+    this.gain = Sound.ac.createGain();
+    this.gain.gain.value = 0;
+    this.gain.connect(Sound.master);
+    this.nextTime = Sound.ac.currentTime + 0.1;
+    this.timer = setInterval(() => this.schedule(), 25);
+  },
+
+  // Called every frame: picks the theme and the loudness for this moment
+  update() {
+    if (!this.gain) return;
+    const driving = mode === "playing" || mode === "countdown" || mode === "crash";
+    if (!driving) this.want = "menu";
+    else if (currentLocation().name === "Manila") this.want = "boss";
+    else if (atmo.night > 0.5) this.want = "night";
+    else this.want = "drive";
+    let target = driving ? 1 : 0.75;
+    if (paused || mode === "over") target = 0.4;
+    if (mode === "crash") target = 0.25;
+    this.gain.gain.setTargetAtTime(this.on ? 0.2 * target : 0, Sound.ac.currentTime, 0.3);
+  },
+
+  toggle() {
+    this.on = !this.on;
+    saveMusicOn(this.on);
+    musicBtn.classList.toggle("off", !this.on);
+  },
+
+  // Plans the next few steps just ahead of time
+  schedule() {
+    while (this.nextTime < Sound.ac.currentTime + 0.12) {
+      if (this.step % 16 === 0 && this.want !== this.themeName) {   // switch themes on a new bar
+        this.themeName = this.want;
+        this.theme = THEMES[this.want];
+        this.step = 0;
+      }
+      const stepDur = 60 / this.theme.BPM / 4;      // one 16th note
+      this.playStep(this.step, this.nextTime, stepDur);
+      this.nextTime += stepDur;
+      this.step = (this.step + 1) % 128;            // 8 bars × 16 steps
+    }
+  },
+
+  note(freq, t, dur, type, vol) {
+    const ac = Sound.ac;
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.01);   // quick start
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur); // fade out
+    o.connect(g);
+    g.connect(this.gain);
+    o.start(t);
+    o.stop(t + dur + 0.05);
+  },
+
+  drum(t, kind) {
+    const ac = Sound.ac;
+    if (kind === "kick") {                          // a low "boom" that drops in pitch
+      const o = ac.createOscillator();
+      const g = ac.createGain();
+      o.frequency.setValueAtTime(130, t);
+      o.frequency.exponentialRampToValueAtTime(40, t + 0.12);
+      g.gain.setValueAtTime(0.9, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+      o.connect(g);
+      g.connect(this.gain);
+      o.start(t);
+      o.stop(t + 0.2);
+      return;
+    }
+    const src = ac.createBufferSource();            // snare and hi-hat are short noise bursts
+    src.buffer = Sound.noiseBuf;
+    const f = ac.createBiquadFilter();
+    f.type = kind === "snare" ? "bandpass" : "highpass";
+    f.frequency.value = kind === "snare" ? 1800 : 7000;
+    const g = ac.createGain();
+    const len = kind === "snare" ? 0.14 : 0.04;
+    g.gain.setValueAtTime(kind === "snare" ? 0.45 : 0.16, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    src.connect(f);
+    f.connect(g);
+    g.connect(this.gain);
+    src.start(t, Math.random() * 0.5);
+    src.stop(t + len + 0.02);
+  },
+
+  playStep(s, t, d) {
+    const th = this.theme;
+    const bar = Math.floor(s / 16);
+    const i = s % 16;
+    if (th.kick.includes(i)) this.drum(t, "kick");
+    if (th.snare.includes(i)) this.drum(t, "snare");
+    if (th.hat.includes(i)) this.drum(t, "hat");
+    if (th.bassSteps.includes(i)) {
+      const up = th.bassUp.includes(i) ? 12 : 0;    // jump up an octave sometimes
+      this.note(midi(th.bass[bar] + up), t, d * th.bassLen, th.bassType, th.bassVol);
+    }
+    if (i % th.arpEvery === 0) {                    // the chord's notes one after another
+      const ch = th.chords[bar];
+      this.note(midi(ch[(i / th.arpEvery) % 3]), t, d * th.arpLen, th.arpType, th.arpVol);
+    }
+    if (i % 2 === 0) {                              // melody (eighth notes)
+      const m = th.melody[bar * 8 + i / 2];
+      if (m) this.note(midi(m), t, d * th.leadLen, th.leadType, th.leadVol);
+    }
+  },
+};
+musicBtn.classList.toggle("off", !Music.on);
 
 // ----- 9d. LOCATIONS, WEATHER and TIME OF DAY -----
 // Every LEVEL_SCORE points you reach the next place. Each place has its own
@@ -1141,13 +2297,33 @@ const LOCATIONS = [
     fillers: ["palm", "palm", "pool", "sorbetes"], palms: true },
   { name: "SLEX",      time: "night",  rain: false, note: "Night drive. Watch the tail lights" },
   { name: "Tagaytay",  time: "sunset", rain: false, bg: "taal", note: "Taal Volcano at sunset" },
-  { name: "Manila",    time: "night",  rain: true,  note: "Stormy night!" },
+  { name: "Manila",    time: "night",  rain: false, bg: "manila", note: "City lights at night!" },
+  // After Manila the trip goes north on NLEX
+  { name: "Pampanga", time: "day", rain: false, bg: "arayat", note: "Christmas capital! Giant parols and sisig",
+    landmarks: ["parol", "sisig", "ricefield", "parol", "church", "sisig"],
+    fillers: ["parolpole", "parolpole", "ricefield", "kubo"],
+    grass: [[146, 214, 98], [134, 204, 88]] },              // bright rice-field green
+  { name: "Baguio", time: "day", rain: false, bg: "baguio", fog: true, pines: true, note: "Summer capital! Cool air, fog and pine trees",
+    landmarks: ["cathedral", "burnham", "strawberry", "ubestore", "strawberry"],
+    fillers: ["pines", "pines", "house", "ubestore"],
+    grass: [[86, 152, 106], [78, 142, 98]] },               // dark mountain green
+  { name: "Ilocos", time: "sunset", rain: false, bg: "ilocos", palms: true, note: "Vigan heritage and Bangui windmills",
+    landmarks: ["vigan", "windmill", "paoay", "empanada", "windmill", "vigan"],
+    fillers: ["lamppost", "lamppost", "empanada", "windmill"],
+    grass: [[206, 196, 132], [196, 186, 122]] },            // dry sandy ground by the sea
 ];
 const currentLocation = () => LOCATIONS[level % LOCATIONS.length];
+// How many vehicles can be on the road at once in this place
+function carLimit() {
+  const normal = Math.min(14, 6 + level * 2);
+  return currentLocation().name === "Calamba" ? 4 : normal;   // Calamba: much less traffic (the heat is the challenge)
+}
 
 // How much night / sunset / rain there is right now (0 = none, 1 = full).
 // These slowly move toward the current location's values (smooth changes).
-const atmo = { night: 0, sunset: 0, rain: 0 };
+const atmo = { night: 0, sunset: 0, rain: 0, mist: 0 };
+// Ground color: each place can have its own (it slowly blends into the next one)
+const GRASS = { g1: [...COL.grass1], g2: [...COL.grass2] };
 
 function updateAtmosphere(dt) {
   const loc = mode === "home" ? LOCATIONS[0] : currentLocation();
@@ -1155,14 +2331,25 @@ function updateAtmosphere(dt) {
     night: loc.time === "night" ? 1 : 0,
     sunset: loc.time === "sunset" ? 1 : 0,
     rain: loc.rain ? 1 : 0,
+    mist: loc.fog ? 1 : 0,                          // Baguio fog
   };
   for (const key in atmo) atmo[key] += (target[key] - atmo[key]) * Math.min(1, 0.012 * dt);
+  const [t1, t2] = loc.grass || [COL.grass1, COL.grass2];
+  for (let i = 0; i < 3; i++) {
+    GRASS.g1[i] += (t1[i] - GRASS.g1[i]) * Math.min(1, 0.012 * dt);
+    GRASS.g2[i] += (t2[i] - GRASS.g2[i]) * Math.min(1, 0.012 * dt);
+  }
 }
 
 function updateLevel() {
   const newLevel = Math.floor(odo / LOCATION_DIST);   // based on distance driven
   if (newLevel > level) {
+    const leaving = currentLocation().name;
     level = newLevel;
+    if (leaving === "Calamba") {                       // survived the TAG-INIT challenge!
+      kita += 100;
+      popup("TAG-INIT SURVIVOR! +₱100", "#fb923c");
+    }
     bannerT = 210;        // show "Now entering ..." for 3.5 seconds
     Sound.levelUp();
     if (currentLocation().name === "Tagaytay" && !hariUnlocked) {   // the secret unlock
@@ -1267,11 +2454,20 @@ const POWERS = {
   shield: { color: "#38bdf8", label: "SHIELD" },   // survive one crash
   magnet: { color: "#ef4444", label: "MAGNET" },   // pulls coins to you
   slowmo: { color: "#a855f7", label: "SLOW-MO" },  // traffic moves at half speed
-  walis:  { color: "#22c55e", label: "WALIS" },    // sweeps ALL vehicles off the road for 2 seconds
+  enforcer: { color: "#65a30d", label: "ENFORCER" }, // a traffic enforcer clears ALL vehicles off the road for 2 seconds
 };
 const MAGNET_TIME = 480;   // 8 seconds
 const SLOW_TIME = 300;     // 5 seconds
-const WALIS_TIME = 120;    // 2 seconds
+const ENFORCER_TIME = 120; // 2 seconds
+
+// Extra power-up visuals
+let pfx = null;            // the "burst" when you grab a power-up: { kind, t }
+let edgeT = 0, edgeKind = "shield";   // colored glow around the screen edges
+let enforcerT = 0;         // ENFORCER: the traffic enforcer on screen blowing the whistle
+const ENFORCER_SHOW = 90;  // how long the enforcer stays on screen (1.5 s)
+let ghostXs = [];          // SLOW-MO: where the car was a moment ago (for afterimages)
+// "#38bdf8" -> "56,189,248" (so we can add transparency)
+const rgbOf = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(",");
 
 function spawnPickups(dt) {
   pickupTimer -= dt;
@@ -1279,21 +2475,36 @@ function spawnPickups(dt) {
     const kind = firstPickup ? "shield" : pickOne(Object.keys(POWERS));
     firstPickup = false;
     pickups.push(placeOnLane({ kind }, farAhead()));
-    pickupTimer = 600 + Math.random() * 420;   // next one in 10–17 seconds
+    // next one in 10–17 seconds, but much sooner after Los Baños (Calamba and on)
+    pickupTimer = level >= 3 ? 260 + Math.random() * 200 : 600 + Math.random() * 420;
   }
 }
 
 function collectPowerUp(kind) {
   Sound.powerup();
   popup(POWERS[kind].label + "!", POWERS[kind].color);
+  pfx = { kind, t: 0 };                      // ring + icon burst from the car
+  edgeT = 40;                                // screen edges glow in the power's color
+  edgeKind = kind;
+  const p = playerScreen(), rgb = rgbOf(POWERS[kind].color);
+  for (let i = 0; i < 36; i++) {             // sparkles fly out in every direction
+    const a = (i / 36) * Math.PI * 2;
+    addPart({ kind: "spark", x: p.x, y: p.y - p.w * 0.35, vx: Math.cos(a) * (3 + Math.random() * 3),
+      vy: Math.sin(a) * (2 + Math.random() * 2), g: 0.05, life: 26, max: 26, size: 2.5,
+      color: i % 3 ? rgb : "255,255,255" });
+  }
+  if (kind === "enforcer") enforcerT = ENFORCER_SHOW;   // the enforcer appears
   if (kind === "shield") shield = true;
   const mult = ptype().powerMult || 1;
   if (kind === "magnet") magnetT = magnetMax = MAGNET_TIME * mult;
   if (kind === "slowmo") slowT = slowMax = SLOW_TIME * mult;
-  if (kind === "walis") {
-    clearT = WALIS_TIME;         // the road is empty for 2 seconds
-    flashT = 8;                  // white "poof!"
-    Sound.shieldBreak();
+  if (kind === "enforcer") {
+    clearT = ENFORCER_TIME;      // the road is empty for 2 seconds
+    Sound.whistle();             // PRRT! PRRRRT!
+    popup("TABI! TABI!", "#a3e635");
+    for (const car of cars) {    // every vehicle is waved off to the nearest side of the road
+      car.exitDir = car.x < playerX - 0.05 ? -1 : car.x > playerX + 0.05 ? 1 : (car.lane < 2 ? -1 : 1);
+    }
   }
 }
 
@@ -1308,7 +2519,8 @@ function useShield(car) {
 }
 
 // CLOSE CALL: you got out of a vehicle's lane just before reaching it
-function nearMiss() {
+function nearMiss(car) {
+  sparks(Math.sign(car.x - playerX) || 1);       // sparks on the side you slipped past
   combo = comboT > 0 ? combo + 1 : 1;
   comboT = 180;                                   // 3 seconds to get the next one
   const pts = Math.round(25 * Math.min(combo, 10) * (ptype().nearMult || 1));   // max x10
@@ -1483,7 +2695,10 @@ function updateCrossing(dt, wdt, prevPz, pz) {
   }
   if (!crossing) return;
 
+  // When you get close, people stop and wait (so they never step in front of you at the last second)
+  const waiting = relZ(crossing.z, pz) < 32 * SEG_LEN;
   for (const p of crossing.peds) {                            // people walk across
+    if (waiting) continue;
     if (p.delay > 0) { p.delay -= wdt; continue; }
     if (Math.abs(p.x) < 1.38 || Math.sign(p.x) !== p.dir) {
       p.x += p.dir * p.speed * wdt;
@@ -1522,6 +2737,125 @@ const PED_LOOKS = [
   { shirt: "#60a5fa", pants: "#0f172a", skin: "#e0ac69", hair: "#6b4f2a", bag: null },
 ];
 
+// ----- 10b. "JUICE": particles, car tilt, confetti -----
+// A particle is a tiny dot or line that moves, fades and disappears.
+//   puff  = dust behind the tires          drop  = water spray (rain, floods)
+//   spark = a quick bright line (close calls)
+let parts = [];          // particles around the player (they shake/zoom with the world)
+let confetti = [];       // confetti pieces on top of everything
+let tilt = 0;            // how much the player's car leans while changing lanes
+let recordShown = false; // did we already celebrate beating the best score this run?
+
+function addPart(p) {
+  if (parts.length < 320) parts.push(p);       // a limit, so it can never get slow
+}
+
+// Dust and water from the rear tires, every frame
+function emitTireParticles(dt) {
+  if (mode !== "playing" && mode !== "home") return;
+  const p = playerScreen();
+  const wheels = [p.x - p.w * 0.38, p.x + p.w * 0.38];
+  const steering = LANE_POS[playerLane] - playerX;
+  if (inFlood) {                                     // big splashes in a flood
+    for (let i = 0; i < 6; i++) {
+      const wx = wheels[i % 2];
+      addPart({ kind: "drop", x: wx, y: p.y - 3, vx: (Math.random() - 0.5) * 8, vy: -3 - Math.random() * 5,
+        g: 0.35, life: 28, max: 28, size: 2 + Math.random() * 3, color: "200,225,245" });
+    }
+  } else if (atmo.rain > 0.3) {                      // spray from wet tires
+    for (let i = 0; i < 4; i++) {
+      const wx = wheels[i % 2];
+      addPart({ kind: "drop", x: wx, y: p.y - 2, vx: (Math.random() - 0.5) * 4, vy: -1.5 - Math.random() * 3,
+        g: 0.25, life: 24, max: 24, size: 2 + Math.random() * 2, color: "215,232,255" });
+    }
+    if (Math.random() < 0.7 * dt) {                   // a misty cloud of water behind the wheels
+      addPart({ kind: "puff", x: wheels[Math.random() < 0.5 ? 0 : 1], y: p.y - 6,
+        vx: (Math.random() - 0.5) * 1.2, vy: 0.5 + Math.random() * 0.5, g: 0, life: 34, max: 34,
+        size: 8, color: "225,235,245" });
+    }
+  } else if (speed > 120 && Math.random() < 0.3 * dt) { // light dust on a dry road
+    addPart({ kind: "puff", x: wheels[Math.random() < 0.5 ? 0 : 1], y: p.y - 4,
+      vx: (Math.random() - 0.5) * 0.8, vy: 0.6 + Math.random() * 0.6, g: 0, life: 30, max: 30,
+      size: 5, color: "205,195,175" });
+  }
+  if (Math.abs(steering) > 0.08 && atmo.rain < 0.3 && Math.random() < 0.6 * dt) {
+    // changing lanes kicks up extra dust on the outside of the turn
+    const side = steering > 0 ? -1 : 1;
+    addPart({ kind: "puff", x: p.x + side * p.w * 0.45, y: p.y - 4,
+      vx: side * (0.8 + Math.random()), vy: 0.4 + Math.random() * 0.5, g: 0, life: 26, max: 26,
+      size: 6, color: "205,195,175" });
+  }
+}
+
+// Sparks fly out on the side where you just slipped past a vehicle
+function sparks(side) {
+  const p = playerScreen();
+  for (let i = 0; i < 22; i++) {
+    addPart({ kind: "spark", x: p.x + side * p.w * 0.5, y: p.y - p.w * 0.25 - Math.random() * p.w * 0.2,
+      vx: side * (1.5 + Math.random() * 5), vy: -Math.random() * 4 + 0.5, g: 0.18, life: 22, max: 22,
+      size: 2, color: Math.random() < 0.5 ? "255,214,10" : "255,140,30" });
+  }
+}
+
+// Confetti rain for a new high score
+function burstConfetti() {
+  const colors = ["#d62828", "#f9c80e", "#1d4fbf", "#22c55e", "#f472b6", "#ffffff"];
+  for (let i = 0; i < 160; i++) {
+    confetti.push({ x: Math.random() * W, y: -20 - Math.random() * 200, vx: (Math.random() - 0.5) * 3,
+      vy: 2 + Math.random() * 3, rot: Math.random() * 6, spin: (Math.random() - 0.5) * 0.3,
+      w: 6 + Math.random() * 6, h: 4 + Math.random() * 4, color: colors[i % colors.length], life: 240 });
+  }
+}
+
+function updateParticles(dt) {
+  for (const p of parts) {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += p.g * dt;
+    p.life -= dt;
+    if (p.kind === "puff") p.size += 0.45 * dt;    // dust spreads out
+  }
+  parts = parts.filter((p) => p.life > 0);
+  for (const c of confetti) {
+    c.x += (c.vx + Math.sin(c.rot) * 0.6) * dt;    // flutters side to side
+    c.y += c.vy * dt;
+    c.rot += c.spin * dt;
+    c.life -= dt;
+  }
+  confetti = confetti.filter((c) => c.life > 0 && c.y < H + 20);
+}
+
+function drawParticles() {
+  for (const p of parts) {
+    const a = p.life / p.max;                       // fades out as it gets older
+    if (p.kind === "spark") {
+      ctx.strokeStyle = `rgba(${p.color},${a})`;
+      ctx.lineWidth = p.size;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x - p.vx * 2.5, p.y - p.vy * 2.5);   // a short streak behind it
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = `rgba(${p.color},${(p.kind === "puff" ? 0.35 : 0.8) * a})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawConfetti() {
+  for (const c of confetti) {
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rot);
+    ctx.fillStyle = c.color;
+    ctx.globalAlpha = Math.min(1, c.life / 40);
+    ctx.fillRect(-c.w / 2, -c.h / 2, c.w, Math.abs(Math.cos(c.rot * 2)) * c.h + 1);   // looks like it flips
+    ctx.restore();
+  }
+}
+
 // ----- 10. UPDATE: move everything and apply the rules -----
 // demo = true on the home screen: the car drives itself, no crashes, no score
 function update(dt, demo = false) {
@@ -1540,6 +2874,7 @@ function update(dt, demo = false) {
   const prevPz = playerZ();         // where we were at the start of this frame
   position = (position + speed * wdt) % TRACK_LEN;
   odo += speed * wdt;
+  setHills(hillsFor(odo));          // the hills grow slowly as you drive further
   const pz = playerZ();
   updateScenery();
   if (!demo) {
@@ -1557,6 +2892,13 @@ function update(dt, demo = false) {
   }
   playerX += (LANE_POS[playerLane] - playerX) * Math.min(1, grip * dt);
   cameraX += (playerX * 0.8 - cameraX) * Math.min(1, 0.08 * dt);
+  tilt = (LANE_POS[playerLane] - playerX) * 0.22;   // the car leans toward where it's going
+  emitTireParticles(dt);
+
+  // Camera leans a little on curves and while changing lanes (feels more 3D)
+  const leanTarget = Math.max(-0.035, Math.min(0.035,
+    findSegment(pz).curve * 0.004 + (LANE_POS[playerLane] - playerX) * 0.05));
+  lean += (leanTarget - lean) * Math.min(1, 0.08 * dt);
 
   // On a curve, slide the background so the world seems to turn
   bgOffset += findSegment(pz).curve * (speed * wdt / SEG_LEN) * 2;
@@ -1574,18 +2916,19 @@ function update(dt, demo = false) {
     if (level >= 2) maybeChangeLane(dt);
   }
 
-  // More traffic in each new place (6 at the start, max 14)
-  if (cars.length < Math.min(14, 6 + level * 2) && clearT <= 0) addCar(farAhead());
+  // More traffic in each new place (6 at the start, max 14). Calamba is lighter.
+  if (cars.length < carLimit() && clearT <= 0) addCar(farAhead());
 
-  // WALIS: while it lasts, traffic is gone. When it ends, traffic comes back far away.
+  // ENFORCER: while it lasts, traffic is gone. When it ends, traffic comes back far away.
   if (clearT > 0) {
     clearT = Math.max(0, clearT - dt);
     if (clearT === 0) for (const car of cars) placeCar(car, farAhead());
   }
   updateTrafficSpeeds(wdt);
 
+  let goneCount = 0;                           // extra cars taken off the road this frame
   for (const car of cars) {
-    if (clearT > 0) break;                     // swept away by WALIS
+    if (clearT > 0) break;                     // waved off the road by the ENFORCER
     const before = relZ(car.z, prevPz);        // distance ahead of us last frame
     car.z = (car.z + car.speed * wdt) % TRACK_LEN;
     const now = relZ(car.z, pz);
@@ -1612,9 +2955,16 @@ function update(dt, demo = false) {
     if (before >= 0 && now < 0 && !demo) {
       score += 10;                                  // +10 per vehicle passed
       if (car.type === "jeepney") Sound.horn();     // jeepneys honk as you pass
-      if (car.danger && frame - car.danger < 50) nearMiss();   // dodged at the last moment
+      if (car.danger && frame - car.danger < 50) nearMiss(car);   // dodged at the last moment
     }
-    if (now < -PLAYER_Z - 2 * SEG_LEN) placeCar(car, farAhead()); // reuse it ahead
+    if (now < -PLAYER_Z - 2 * SEG_LEN) {
+      // Too many cars for this place (like in Calamba)? Remove it. Otherwise reuse it ahead.
+      if (cars.length - goneCount > carLimit()) { car.gone = true; goneCount++; }
+      else placeCar(car, farAhead());
+    }
+  }
+  if (goneCount > 0) {                         // really remove the extra cars
+    for (let i = cars.length - 1; i >= 0; i--) if (cars[i].gone) cars.splice(i, 1);
   }
 
   // Coins (they stand still). The magnet pulls coins ahead of you into your lane
@@ -1651,6 +3001,14 @@ function update(dt, demo = false) {
     }
   }
   pickups = pickups.filter((p) => !p.done);
+
+  // Beat your best score during a run: confetti!
+  if (!demo && !recordShown && best > 0 && score > best) {
+    recordShown = true;
+    popup("BAGONG RECORD!", "#f9c80e");
+    burstConfetti();
+    Sound.levelUp();
+  }
 
   if (!demo) updateHud();
 }
@@ -1692,6 +3050,8 @@ function updateCrash(dt) {
 // Things that keep moving on every screen (unless paused)
 function updateEffects(dt) {
   updateAtmosphere(dt);
+  const hot = mode !== "home" && currentLocation().name === "Calamba";
+  heat += ((hot ? 1 : 0) - heat) * Math.min(1, 0.015 * dt);   // heat fades in and out smoothly
   if (atmo.rain > 0.01) {
     for (const d of drops) {
       d.y += d.spd * dt;
@@ -1704,21 +3064,26 @@ function updateEffects(dt) {
   }
   shake *= Math.pow(0.88, dt);
   flashT = Math.max(0, flashT - dt);
+  edgeT = Math.max(0, edgeT - dt);
+  enforcerT = Math.max(0, enforcerT - dt);
+  if (pfx && (pfx.t += dt) > 45) pfx = null;
   splashT = Math.max(0, splashT - dt);
   const bgTarget = (mode === "home" ? LOCATIONS[0] : currentLocation()).bg || "generic";
   for (const key in bgWeight) bgWeight[key] += ((key === bgTarget ? 1 : 0) - bgWeight[key]) * Math.min(1, 0.02 * dt);
   bannerT = Math.max(0, bannerT - dt);
   goT = Math.max(0, goT - dt);
   for (const p of popups) p.t += dt;
+  updateParticles(dt);
   popups = popups.filter((p) => p.t < 60);
 }
 
 // ----- 11. Projection: world position → screen position -----
-function project(z, camX, camZ, out) {
+// worldY = how high the road is there, camY = how high the camera is
+function project(z, camX, camZ, out, worldY = 0, camY = CAM_H) {
   out.cz = z - camZ;                           // distance from the camera
   out.scale = CAM_DEPTH / out.cz;              // far = small, near = big
   out.x = W / 2 - out.scale * camX * W / 2;
-  out.y = HORIZON + out.scale * CAM_H * H / 2;
+  out.y = HORIZON + out.scale * (camY - worldY) * H / 2;   // higher road = higher on screen
   out.w = out.scale * ROAD_W * W / 2;          // half the road width on screen
 }
 
@@ -1739,7 +3104,7 @@ function drawSegment(seg, fog) {
   const light = Math.floor(seg.index / RUMBLE_LEN) % 2 === 0;
   const r1 = w1 / 7, r2 = w2 / 7;              // red/white stripe width
 
-  ctx.fillStyle = fogged(light ? COL.grass1 : COL.grass2, fog);
+  ctx.fillStyle = fogged(light ? GRASS.g1 : GRASS.g2, fog);
   ctx.fillRect(0, y2, W, y1 - y2 + 1);
 
   poly(fogged(light ? COL.rumble1 : COL.rumble2, fog),
@@ -1808,6 +3173,7 @@ function painter(x, y, w) {
       ctx.fillRect(x + x0 * w, y + y0 * w, w0 * w, h0 * w);
     },
     shadow: () => {
+      if (noShadow) return;              // (no shadow on the garage turntable faces)
       ctx.fillStyle = "rgba(0,0,0,0.25)";
       ctx.beginPath();
       ctx.ellipse(x, y, w * 0.58, w * 0.065, 0, 0, Math.PI * 2);
@@ -1881,45 +3247,40 @@ function drawCar(x, y, w, col) {
 }
 
 // E-bike: small enclosed electric tricycle with a black canopy
-function drawEbike(x, y, w) {
+function drawEbike(x, y, w, look = EBIKE_COLORS[0]) {
   const { R, P, C, T, side, shade, shadow } = painter(x, y, w);
   shadow();
-  tire(R, -0.46, -0.2, 0.12, 0.2);
-  tire(R, 0.34, -0.2, 0.12, 0.2);
+  tire(R, -0.47, -0.2, 0.13, 0.2);                    // two back wheels
+  tire(R, 0.34, -0.2, 0.13, 0.2);
   R(-0.4, -0.17, 0.8, 0.05, "#2a2a2a");               // axle
-  side(-0.52, -0.16, "#5d6268");
-
-  // Grey cargo box with ribs, reflectors and plate
-  R(-0.43, -0.535, 0.86, 0.03, "#a7adb4");
-  R(-0.42, -0.52, 0.84, 0.36, "#8a9097");
-  R(-0.36, -0.47, 0.72, 0.26, "#767c84");
-  R(-0.36, -0.4, 0.72, 0.012, "#8a9097");
-  R(-0.36, -0.33, 0.72, 0.012, "#8a9097");
-  shade(-0.42, -0.52, 0.84, 0.36);
-  C(0, -0.43, 0.035, "#d33a3a");                      // badge
-  for (const sx of [-0.42, 0.35]) {
-    R(sx, -0.48, 0.07, 0.07, "#ff3b30");              // tail lights
-    R(sx, -0.25, 0.07, 0.03, "#ff7a00");              // reflectors
+  side(-0.52, -0.16, look.dark);
+  // rounded colored body with a white stripe and a cargo rack
+  P(look.body, [-0.44, -0.17, 0.44, -0.17, 0.46, -0.26, 0.44, -0.5, 0.38, -0.55, -0.38, -0.55, -0.44, -0.5, -0.46, -0.26]);
+  shade(-0.46, -0.55, 0.92, 0.38);
+  R(-0.45, -0.36, 0.9, 0.025, "rgba(255,255,255,0.85)");
+  R(-0.4, -0.2, 0.8, 0.03, "#111111");                // rubber bumper
+  for (const sx of [-0.43, 0.33]) {                   // tail lights and orange reflectors
+    P("#ff3b30", [sx, -0.5, sx + 0.1, -0.5, sx + 0.1, -0.43, sx, -0.42]);
+    R(sx + 0.01, -0.28, 0.08, 0.03, "#ff7a00");
   }
-  plate(R, T, 0, -0.255, 0.2, 0.065, "EV 2026");
-
-  // Seat back
-  R(-0.32, -0.8, 0.64, 0.28, "#1f1f1f");
-  R(-0.3, -0.68, 0.6, 0.01, "#3a3a3a");               // stitching
-
-  // Canopy: posts, cover with seams, framed rear window, curved roof, mirrors
-  R(-0.46, -1.24, 0.06, 0.72, "#1a1a1a");
-  R(0.4, -1.24, 0.06, 0.72, "#1a1a1a");
-  R(-0.44, -1.22, 0.88, 0.36, "#353535");
-  R(-0.44, -0.99, 0.88, 0.012, "#262626");
-  R(-0.23, -1.16, 0.46, 0.17, "#1f1f1f");
-  R(-0.2, -1.14, 0.4, 0.13, "#c9d3dc");
-  P(GLASS, [-0.12, -1.14, -0.05, -1.14, -0.11, -1.01, -0.18, -1.01]);
-  P("#2a2a2a", [-0.52, -1.22, 0.52, -1.22, 0.47, -1.32, -0.47, -1.32]);
-  P("#3a3a3a", [-0.47, -1.32, 0.47, -1.32, 0.43, -1.38, -0.43, -1.38]);  // roof top
-  R(-0.47, -1.325, 0.94, 0.015, "#4a4a4a");
-  R(-0.58, -1.02, 0.07, 0.06, "#111111");
-  R(0.51, -1.02, 0.07, 0.06, "#111111");
+  plate(R, T, 0, -0.265, 0.2, 0.06, "EV 2026");
+  // back seat with a passenger
+  R(-0.34, -0.8, 0.68, 0.26, "#1f1f1f");
+  R(-0.32, -0.68, 0.64, 0.01, "#3a3a3a");
+  C(0.12, -0.85, 0.075, "#8d5a3b");                    // passenger's head and shirt
+  R(0.05, -0.85, 0.14, 0.04, "#1f1f1f");
+  R(0.03, -0.78, 0.18, 0.18, "#38bdf8");
+  // canopy: posts, clear plastic back cover, roof with a rounded edge
+  R(-0.47, -1.24, 0.05, 0.7, "#1a1a1a");
+  R(0.42, -1.24, 0.05, 0.7, "#1a1a1a");
+  R(-0.42, -1.2, 0.84, 0.32, "rgba(203,213,225,0.35)");   // see-through rain cover
+  R(-0.42, -0.9, 0.84, 0.02, "#1a1a1a");
+  P(GLASS, [0.1, -1.18, 0.18, -1.18, 0.1, -0.92, 0.02, -0.92]);
+  P(look.roof, [-0.53, -1.2, 0.53, -1.2, 0.53, -1.26, 0.48, -1.33, -0.48, -1.33, -0.53, -1.26]);
+  R(-0.53, -1.215, 1.06, 0.02, look.body);             // colored trim under the roof
+  P("rgba(255,255,255,0.18)", [-0.46, -1.33, 0.46, -1.33, 0.42, -1.36, -0.42, -1.36]);
+  R(-0.6, -1.02, 0.08, 0.06, "#111111");               // mirrors
+  R(0.52, -1.02, 0.08, 0.06, "#111111");
 }
 
 // Tricycle: motorcycle on the left, colored sidecar on the right, one roof
@@ -2021,54 +3382,56 @@ function drawJeepney(x, y, w, look) {
   tire(R, -0.46, -0.22, 0.14, 0.22);
   tire(R, 0.32, -0.22, 0.14, 0.22);
   side(-1.02, -0.24, look.dark);
-
-  // Body, bands and paintings
-  R(-0.5, -0.58, 1, 0.34, look.body);
+  // painted body with stripes
+  R(-0.5, -1.0, 1, 0.76, look.body);
+  shade(-0.5, -1.0, 1, 0.76);
   R(-0.5, -0.5, 1, 0.06, look.band);
   R(-0.5, -0.36, 1, 0.04, look.stripe);
-  shade(-0.5, -0.58, 1, 0.34);
-  T("GOD BLESS", -0.35, -0.42, 0.045, "#ffffff");
-  T("OUR TRIP", 0.35, -0.42, 0.045, "#ffffff");
-  R(-0.5, -1.0, 0.3, 0.42, look.body);
-  R(0.2, -1.0, 0.3, 0.42, look.body);
-  for (const sx of [-0.45, 0.25]) {                   // windows with shine
+  R(-0.5, -0.32, 1, 0.08, "#c9d0d6");                 // stainless lower panel
+  for (let i = 0; i < 16; i++) R(-0.49 + i * 0.062, -0.31, 0.012, 0.06, "#9aa3ab");
+  // side windows with chrome frames
+  for (const sx of [-0.46, 0.26]) {
+    R(sx - 0.015, -0.965, 0.23, 0.2, "#d7dde2");
     R(sx, -0.95, 0.2, 0.17, "#bfe3f5");
     P(GLASS, [sx + 0.12, -0.95, sx + 0.17, -0.95, sx + 0.1, -0.78, sx + 0.05, -0.78]);
   }
-  C(-0.35, -0.68, 0.05, look.band);                   // sun with rays
+  // art on the back: a sun on the left, stars on the right, a little horse in the middle
+  C(-0.35, -0.64, 0.05, look.band);
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
-    C(-0.35 + Math.cos(a) * 0.075, -0.68 + Math.sin(a) * 0.075, 0.012, look.band);
+    C(-0.35 + Math.cos(a) * 0.075, -0.64 + Math.sin(a) * 0.075, 0.012, look.band);
   }
-  for (const sx of [0.27, 0.35, 0.43]) C(sx, -0.68, 0.02, look.band); // stars
-
-  // Open back door: dark inside, seats, passengers, handrails
-  R(-0.2, -1.0, 0.4, 0.76, "#3b2a1a");
-  R(-0.2, -0.64, 0.09, 0.22, "#e8892b");
-  R(0.11, -0.64, 0.09, 0.22, "#e8892b");
-  C(-0.15, -0.72, 0.045, "#6b5240");
+  for (const [sx, sy] of [[0.28, -0.66], [0.36, -0.6], [0.43, -0.67]]) {
+    P(look.band, [sx, sy - 0.03, sx + 0.01, sy - 0.008, sx + 0.03, sy, sx + 0.01, sy + 0.008, sx, sy + 0.03, sx - 0.01, sy + 0.008, sx - 0.03, sy, sx - 0.01, sy - 0.008]);
+  }
+  for (const sx of [-0.43, 0.43]) R(sx - 0.03, -0.46, 0.06, 0.08, "#ff3b30");   // round-ish tail lights
+  for (const sx of [-0.43, 0.43]) R(sx - 0.02, -0.455, 0.02, 0.03, "#ffd0c8");
+  // open back door: dark inside, seats on both sides, passengers, chrome hand rails
+  R(-0.2, -1.0, 0.4, 0.76, "#2a1d12");
+  R(-0.2, -0.64, 0.09, 0.24, "#c2410c");
+  R(0.11, -0.64, 0.09, 0.24, "#c2410c");
+  C(-0.15, -0.72, 0.045, "#8d5a3b");
+  R(-0.19, -0.69, 0.08, 0.05, "#38bdf8");
   C(0.15, -0.74, 0.045, "#7a5c45");
-  R(-0.2, -0.3, 0.4, 0.06, "#5a4330");                // floor
-  R(-0.215, -1.0, 0.025, 0.76, "#d7dde2");
-  R(0.19, -1.0, 0.025, 0.76, "#d7dde2");
-
-  for (const sx of [-0.48, 0.4]) R(sx, -0.57, 0.08, 0.06, "#ff3b30"); // tail lights
-  R(-0.5, -0.24, 1, 0.06, "#c9d0d6");                 // chrome bumper
-  R(-0.5, -0.24, 1, 0.012, "#f1f5f9");
-  R(-0.22, -0.2, 0.44, 0.03, "#9aa3ab");              // step
+  R(0.11, -0.71, 0.08, 0.07, "#f472b6");
+  R(-0.2, -0.3, 0.4, 0.06, "#5a4330");
+  R(-0.215, -1.0, 0.025, 0.76, "#e5e7eb");
+  R(0.19, -1.0, 0.025, 0.76, "#e5e7eb");
+  R(-0.2, -0.95, 0.4, 0.015, "#e5e7eb");               // grab bar
+  // chrome bumper and step
+  R(-0.52, -0.24, 1.04, 0.06, "#d7dde2");
+  R(-0.52, -0.24, 1.04, 0.012, "#ffffff");
+  R(-0.22, -0.2, 0.44, 0.035, "#9aa3ab");
   plate(R, T, 0, -0.275, 0.18, 0.06, "PUJ 143", "#f9d71c");
-  R(-0.61, -0.92, 0.07, 0.09, "#c9d0d6");             // chrome mirrors
-  R(0.54, -0.92, 0.07, 0.09, "#c9d0d6");
-
-  // Roof with a row of small colored lights
-  P(look.roof, [-0.55, -1.12, 0.55, -1.12, 0.5, -1.2, -0.5, -1.2]);   // roof top
-  P("rgba(255,255,255,0.22)", [-0.55, -1.12, 0.55, -1.12, 0.5, -1.2, -0.5, -1.2]);
-  R(-0.55, -1.12, 1.1, 0.03, look.stripe);
-  R(-0.55, -1.09, 1.1, 0.07, look.roof);
-  R(-0.55, -1.03, 1.1, 0.03, look.band);
-  R(-0.55, -1.125, 1.1, 0.01, "#f1f5f9");
+  R(-0.62, -0.93, 0.08, 0.1, "#d7dde2");               // chrome mirrors on stalks
+  R(0.54, -0.93, 0.08, 0.1, "#d7dde2");
+  // roof: rounded edge, stripes and a row of colored lights
+  P(look.roof, [-0.56, -1.0, 0.56, -1.0, 0.56, -1.08, 0.52, -1.14, -0.52, -1.14, -0.56, -1.08]);
+  R(-0.56, -1.05, 1.12, 0.025, look.band);
+  R(-0.56, -1.025, 1.12, 0.02, look.stripe);
+  P("rgba(255,255,255,0.25)", [-0.52, -1.14, 0.52, -1.14, 0.48, -1.17, -0.48, -1.17]);
   const bulbs = ["#ff3b30", "#facc15", "#4ade80", "#38bdf8"];
-  for (let i = 0; i < 10; i++) C(-0.495 + i * 0.11, -1.055, 0.014, bulbs[i % 4]);
+  for (let i = 0; i < 10; i++) C(-0.495 + i * 0.11, -1.1, 0.016, bulbs[i % 4]);
 }
 
 // Box truck: aluminum box with company stripe, door bars and reflective tape
@@ -2141,7 +3504,7 @@ function drawDumpTruck(x, y, w) {
 function drawVehicle(v, x, y, k) {
   const w = VEHICLES[v.type].w * k;
   if (v.type === "car") drawCar(x, y, w, v.look);
-  else if (v.type === "ebike") drawEbike(x, y, w);
+  else if (v.type === "ebike") drawEbike(x, y, w, v.look);
   else if (v.type === "tricycle") drawTricycle(x, y, w, v.look);
   else if (v.type === "l300") drawL300(x, y, w);
   else if (v.type === "jeepney") drawJeepney(x, y, w, v.look);
@@ -2218,38 +3581,44 @@ function drawKalesa(x, y, w) {
 function drawSports(x, y, w, col) {
   const { R, P, C, T, side, shade, shadow } = painter(x, y, w);
   shadow();
-  side(-0.3, -0.12, col.dark);
+  side(-0.32, -0.12, col.dark);
   side(-0.12, 0, TIRE);
-  tire(R, -0.5, -0.14, 0.18, 0.14);
-  tire(R, 0.32, -0.14, 0.18, 0.14);
-  R(-0.34, -0.13, 0.68, 0.11, "#111111");             // diffuser with fins
-  for (let i = 0; i < 6; i++) R(-0.29 + i * 0.11, -0.13, 0.02, 0.11, "#2a2a2a");
-  for (const ex of [-0.1, -0.035, 0.035, 0.1]) {      // quad exhausts
-    C(ex, -0.065, 0.028, "#9aa1a8");
-    C(ex, -0.065, 0.017, "#1a1a1a");
+  tire(R, -0.5, -0.15, 0.19, 0.15);                    // wide tires
+  tire(R, 0.31, -0.15, 0.19, 0.15);
+  P("#111111", [-0.4, -0.15, 0.4, -0.15, 0.36, -0.03, -0.36, -0.03]);   // diffuser with fins
+  for (let i = 0; i < 7; i++) R(-0.3 + i * 0.1, -0.14, 0.018, 0.1, "#2a2a2a");
+  for (const ex of [-0.12, -0.045, 0.045, 0.12]) {     // quad exhausts
+    C(ex, -0.075, 0.03, "#9aa1a8");
+    C(ex, -0.075, 0.019, "#1a1a1a");
   }
-  R(-0.5, -0.31, 1, 0.18, col.body);
-  R(-0.07, -0.31, 0.045, 0.18, "rgba(255,255,255,0.85)");  // racing stripes
-  R(0.025, -0.31, 0.045, 0.18, "rgba(255,255,255,0.85)");
-  R(-0.46, -0.275, 0.92, 0.018, "#ff2d2d");           // thin LED light strip
-  R(-0.49, -0.295, 0.15, 0.05, "#ff3b30");
-  R(0.34, -0.295, 0.15, 0.05, "#ff3b30");
-  R(-0.48, -0.29, 0.06, 0.015, "#ffc2b8");
-  plate(R, T, 0, -0.19, 0.18, 0.055, "SPD 001");
-  shade(-0.5, -0.31, 1, 0.18);
-  P(col.top, [-0.5, -0.31, 0.5, -0.31, 0.42, -0.37, -0.42, -0.37]);   // trunk
-  P(col.body, [-0.3, -0.37, 0.3, -0.37, 0.24, -0.5, -0.24, -0.5]);    // fastback cabin
-  P("#1f2a33", [-0.24, -0.38, 0.24, -0.38, 0.2, -0.48, -0.2, -0.48]);
-  P(GLASS, [0.06, -0.38, 0.12, -0.38, 0.08, -0.48, 0.02, -0.48]);
-  P(col.top, [-0.24, -0.5, 0.24, -0.5, 0.2, -0.54, -0.2, -0.54]);
-  R(-0.06, -0.54, 0.035, 0.04, "#ffffff");
-  R(0.025, -0.54, 0.035, 0.04, "#ffffff");
-  R(-0.3, -0.43, 0.03, 0.12, "#111111");              // rear wing on struts
-  R(0.27, -0.43, 0.03, 0.12, "#111111");
-  R(-0.5, -0.47, 1, 0.045, "#111111");
-  R(-0.5, -0.47, 1, 0.01, "#3a3a3a");
-  R(-0.53, -0.51, 0.035, 0.1, "#111111");
-  R(0.495, -0.51, 0.035, 0.1, "#111111");
+  // body: wider at the hips, rounded corners
+  P(col.body, [-0.5, -0.15, 0.5, -0.15, 0.53, -0.21, 0.51, -0.3, 0.45, -0.345, -0.45, -0.345, -0.51, -0.3, -0.53, -0.21]);
+  shade(-0.53, -0.345, 1.06, 0.2);
+  P(col.dark, [-0.53, -0.21, -0.4, -0.2, -0.38, -0.15, -0.5, -0.15]);   // dark lower corners
+  P(col.dark, [0.53, -0.21, 0.4, -0.2, 0.38, -0.15, 0.5, -0.15]);
+  R(-0.07, -0.345, 0.045, 0.195, "rgba(255,255,255,0.85)");   // racing stripes
+  R(0.025, -0.345, 0.045, 0.195, "rgba(255,255,255,0.85)");
+  R(-0.47, -0.305, 0.94, 0.03, "#5f0f0f");             // LED light bar
+  R(-0.46, -0.298, 0.92, 0.014, "#ff2d2d");
+  P("#ff3b30", [-0.5, -0.31, -0.3, -0.31, -0.32, -0.27, -0.5, -0.26]);   // tail lights
+  P("#ff3b30", [0.5, -0.31, 0.3, -0.31, 0.32, -0.27, 0.5, -0.26]);
+  R(-0.48, -0.305, 0.08, 0.012, "#ffd0c8");
+  R(0.4, -0.305, 0.08, 0.012, "#ffd0c8");
+  plate(R, T, 0, -0.205, 0.18, 0.055, "SPD 001");
+  P(col.top, [-0.45, -0.345, 0.45, -0.345, 0.37, -0.395, -0.37, -0.395]);   // trunk lid
+  // fastback cabin with a rounded roof
+  P(col.body, [-0.35, -0.395, 0.35, -0.395, 0.27, -0.52, 0.19, -0.56, -0.19, -0.56, -0.27, -0.52]);
+  P("#1f2a33", [-0.28, -0.405, 0.28, -0.405, 0.22, -0.51, 0.15, -0.54, -0.15, -0.54, -0.22, -0.51]);
+  P(GLASS, [0.05, -0.405, 0.12, -0.405, 0.08, -0.53, 0.02, -0.53]);
+  R(-0.4, -0.45, 0.06, 0.04, col.body);                // side mirrors
+  R(0.34, -0.45, 0.06, 0.04, col.body);
+  // big rear wing on two struts
+  R(-0.25, -0.47, 0.03, 0.09, "#111111");
+  R(0.22, -0.47, 0.03, 0.09, "#111111");
+  P("#111111", [-0.52, -0.47, 0.52, -0.47, 0.5, -0.515, -0.5, -0.515]);
+  R(-0.52, -0.515, 1.04, 0.01, "#3f3f46");
+  R(-0.55, -0.55, 0.035, 0.1, "#111111");               // end plates
+  R(0.515, -0.55, 0.035, 0.1, "#111111");
 }
 
 // Electric car: smooth body, full-width light bar, glass roof, no exhaust
@@ -2316,57 +3685,52 @@ function drawMuscle(x, y, w, col) {
 // with a neon underglow, red leather seat, roof spoiler and crowns
 function drawHari(x, y, w) {
   const { R, P, C, T, side, shade, shadow } = painter(x, y, w);
-  const neon = ctx.createRadialGradient(x, y, 0, x, y, w * 0.8);   // cyan glow under the bike
-  neon.addColorStop(0, "rgba(34,211,238,0.55)");
-  neon.addColorStop(1, "rgba(34,211,238,0)");
-  ctx.fillStyle = neon;
-  ctx.fillRect(x - w * 0.8, y - w * 0.25, w * 1.6, w * 0.5);
+  if (!noShadow) {
+    const neon = ctx.createRadialGradient(x, y, 0, x, y, w * 0.8);
+    neon.addColorStop(0, "rgba(34,211,238,0.55)");
+    neon.addColorStop(1, "rgba(34,211,238,0)");
+    ctx.fillStyle = neon;
+    ctx.fillRect(x - w * 0.8, y - w * 0.25, w * 1.6, w * 0.5);
+  }
   shadow();
-  for (const tx of [-0.5, 0.34]) {                    // wheels with gold rims
+  for (const tx of [-0.5, 0.34]) {                      // twin rear wheels with gold rims
     R(tx, -0.22, 0.16, 0.22, TIRE);
     R(tx + 0.03, -0.19, 0.1, 0.16, "#d4a017");
     R(tx + 0.055, -0.16, 0.05, 0.1, "#7a5c00");
   }
-  R(-0.42, -0.18, 0.84, 0.05, "#111111");
   side(-0.56, -0.18, "#1a1a1a");
-
-  // Glossy black body with gold trim and gold flames
-  R(-0.45, -0.56, 0.9, 0.4, "#141414");
-  R(-0.45, -0.56, 0.9, 0.025, "#facc15");
-  R(-0.45, -0.185, 0.9, 0.02, "#facc15");
-  P("#facc15", [-0.45, -0.46, -0.24, -0.38, -0.45, -0.3]);
-  P("#facc15", [0.45, -0.46, 0.24, -0.38, 0.45, -0.3]);
-  R(-0.42, -0.505, 0.84, 0.05, "rgba(255,45,85,0.35)");   // LED light bar
-  R(-0.42, -0.495, 0.84, 0.03, "#ff2d55");
+  // the body: tapered and glossy black
+  P("#141414", [-0.47, -0.18, 0.47, -0.18, 0.49, -0.3, 0.46, -0.5, 0.4, -0.57, -0.4, -0.57, -0.46, -0.5, -0.49, -0.3]);
+  shade(-0.49, -0.57, 0.98, 0.39);
+  P("#facc15", [-0.4, -0.57, 0.4, -0.57, 0.41, -0.555, -0.41, -0.555]);   // gold trim
+  R(-0.47, -0.2, 0.94, 0.018, "#22d3ee");               // neon strip
+  P("#facc15", [-0.47, -0.46, -0.26, -0.38, -0.48, -0.32]);   // gold flames
+  P("#facc15", [0.47, -0.46, 0.26, -0.38, 0.48, -0.32]);
+  R(-0.42, -0.51, 0.84, 0.045, "rgba(255,45,85,0.35)"); // LED light bar
+  R(-0.42, -0.5, 0.84, 0.026, "#ff2d55");
   P("#facc15", [-0.09, -0.3, 0.09, -0.3, 0.1, -0.41, 0.045, -0.355, 0, -0.43, -0.045, -0.355, -0.1, -0.41]); // crown
   C(0, -0.33, 0.012, "#ef4444");
   plate(R, T, 0, -0.245, 0.2, 0.055, "HARI 01");
-  shade(-0.45, -0.56, 0.9, 0.4);
-
-  // Red leather seat with stitching
-  R(-0.32, -0.82, 0.64, 0.26, "#7f1d1d");
+  // red leather seat back with stitching
+  P("#7f1d1d", [-0.34, -0.57, 0.34, -0.57, 0.32, -0.82, 0.28, -0.85, -0.28, -0.85, -0.32, -0.82]);
   R(-0.3, -0.72, 0.6, 0.008, "#fca5a5");
-  R(-0.01, -0.8, 0.02, 0.22, "#fca5a5");
-
-  // Canopy: black frame with gold edges, dark tinted glass, neon strip
-  R(-0.47, -1.26, 0.06, 0.72, "#0a0a0a");
-  R(0.41, -1.26, 0.06, 0.72, "#0a0a0a");
-  R(-0.455, -1.26, 0.015, 0.72, "#facc15");
-  R(0.44, -1.26, 0.015, 0.72, "#facc15");
-  R(-0.44, -1.22, 0.88, 0.38, "#1f1f1f");
-  R(-0.3, -1.17, 0.6, 0.22, "#0f172a");
-  P(GLASS, [0.08, -1.17, 0.16, -1.17, 0.1, -0.95, 0.02, -0.95]);
-  R(-0.44, -0.86, 0.88, 0.015, "#22d3ee");
-  R(-0.22, -0.95, 0.44, 0.085, "#0a0a0a");            // dark strip so the label is easy to read
-  T("E-BIKE", 0, -0.905, 0.08, "#facc15");            // label under the back window
-  R(-0.6, -1.02, 0.08, 0.06, "#facc15");              // gold mirrors
-  R(0.52, -1.02, 0.08, 0.06, "#facc15");
-
-  // Roof spoiler and a little crown on top
-  P("#0a0a0a", [-0.54, -1.24, 0.54, -1.24, 0.5, -1.34, -0.5, -1.34]);
-  R(-0.54, -1.26, 1.08, 0.025, "#facc15");
-  P("#262626", [-0.5, -1.34, 0.5, -1.34, 0.45, -1.4, -0.45, -1.4]);
-  P("#facc15", [-0.07, -1.4, 0.07, -1.4, 0.08, -1.48, 0.035, -1.44, 0, -1.5, -0.035, -1.44, -0.08, -1.48]);
+  R(-0.01, -0.83, 0.02, 0.25, "#fca5a5");
+  // canopy: curved posts and a rounded roof
+  P("#0a0a0a", [-0.5, -0.56, -0.43, -0.56, -0.42, -1.22, -0.46, -1.28, -0.5, -1.22]);
+  P("#0a0a0a", [0.5, -0.56, 0.43, -0.56, 0.42, -1.22, 0.46, -1.28, 0.5, -1.22]);
+  R(-0.49, -1.22, 0.014, 0.64, "#facc15");
+  R(0.476, -1.22, 0.014, 0.64, "#facc15");
+  P("rgba(15,23,42,0.92)", [-0.4, -0.9, 0.4, -0.9, 0.4, -1.16, 0.36, -1.2, -0.36, -1.2, -0.4, -1.16]);   // tinted back window
+  P(GLASS, [0.08, -0.9, 0.16, -0.9, 0.1, -1.18, 0.02, -1.18]);
+  R(-0.4, -0.885, 0.8, 0.015, "#22d3ee");
+  R(-0.2, -0.99, 0.4, 0.08, "#0a0a0a");
+  T("E-BIKE", 0, -0.95, 0.075, "#facc15");
+  R(-0.62, -1.02, 0.09, 0.06, "#facc15");               // gold mirrors
+  R(0.53, -1.02, 0.09, 0.06, "#facc15");
+  P("#18181b", [-0.55, -1.22, 0.55, -1.22, 0.55, -1.28, 0.5, -1.36, -0.5, -1.36, -0.55, -1.28]);   // rounded roof
+  R(-0.55, -1.235, 1.1, 0.02, "#facc15");
+  P("rgba(255,255,255,0.18)", [-0.48, -1.36, 0.48, -1.36, 0.44, -1.38, -0.44, -1.38]);
+  P("#facc15", [-0.07, -1.38, 0.07, -1.38, 0.08, -1.46, 0.035, -1.42, 0, -1.48, -0.035, -1.42, -0.08, -1.46]);
 }
 
 // Draws whatever the player picked in the garage
@@ -2878,6 +4242,284 @@ const LANDMARKS = {
     p.R(-1100, 150, 2200, 120, "#8d6e63");             // bench
   }},
 };
+// ----- Landmarks for the new places after Manila -----
+// A 5-pointed star (for parols)
+function starPts(cx, cy, r, inner = 0.45, spin = 0) {
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + spin + (i * Math.PI) / 5;
+    const rr = i % 2 ? r * inner : r;
+    pts.push(cx + Math.cos(a) * rr, cy - Math.sin(a) * rr);
+  }
+  return pts;
+}
+// How dark it is (so lanterns and lamps glow more at sunset and night)
+const darkness = () => Math.max(atmo.night, atmo.sunset * 0.6, atmo.rain * 0.4);
+
+Object.assign(LANDMARKS, {
+  // PAMPANGA: a giant parol (San Fernando lantern) on a stage, glowing in rings of color
+  parol: { w: 5200, draw(p) {
+    p.box(-2200, 4400, 500, 1200, "#7c2d12", "#5a1f0c", "#9a3412");   // wooden stage
+    for (let i = 0; i < 8; i++) p.R(-2200 + i * 560, 0, 40, 500, "#5a1f0c");
+    p.R(-1700, 500, 140, 3400, "#475569");                  // two poles holding it up
+    p.R(1560, 500, 140, 3400, "#475569");
+    const cx = 0, cy = 3800, r = 2100;
+    const glowA = 0.25 + darkness() * 0.55;
+    p.C(cx, cy, r * 1.25, `rgba(250,204,21,${glowA * 0.35})`);   // soft glow around it
+    p.P("#dc2626", starPts(cx, cy, r));                     // red star points
+    p.P("#facc15", starPts(cx, cy, r * 0.82));
+    const rings = ["#16a34a", "#2563eb", "#f97316", "#a855f7", "#facc15", "#ef4444"];
+    rings.forEach((c, i) => p.C(cx, cy, r * (0.55 - i * 0.08), c));   // rings that light up in turns
+    const on = Math.floor(frame / 10) % rings.length;
+    p.C(cx, cy, r * (0.55 - on * 0.08), "rgba(255,255,255,0.45)");
+    for (let i = 0; i < 12; i++) {                          // spokes like the real lantern
+      const a = (i / 12) * Math.PI * 2;
+      p.P("rgba(255,255,255,0.35)", [cx, cy, cx + Math.cos(a) * r * 0.55, cy + Math.sin(a) * r * 0.55,
+        cx + Math.cos(a + 0.08) * r * 0.55, cy + Math.sin(a + 0.08) * r * 0.55]);
+    }
+    p.C(cx, cy, r * 0.1, "#ffffff");
+    for (const tx of [-500, 0, 500]) {                      // tails ("buntot") hanging down
+      p.P(tx === 0 ? "#facc15" : "#dc2626", [tx - 120, cy - r * 0.6, tx + 120, cy - r * 0.6, tx, cy - r * 1.25]);
+    }
+  }},
+  // Small parol on a lamp post (fills the roadside in Pampanga)
+  parolpole: { w: 1400, draw(p, o) {
+    p.R(-50, 0, 100, 2600, "#64748b");
+    p.R(-50, 2550, 450, 60, "#64748b");
+    const colors = ["#dc2626", "#2563eb", "#16a34a", "#f97316"];
+    const c = colors[Math.floor(o.variant * colors.length)];
+    p.C(400, 2150, 560, `rgba(250,204,21,${0.15 + darkness() * 0.45})`);
+    p.P(c, starPts(400, 2150, 420));
+    p.P("#facc15", starPts(400, 2150, 250));
+    p.C(400, 2150, 80, "#ffffff");
+    p.P(c, [330, 1750, 470, 1750, 400, 1350]);
+  }},
+  // Sisig stall: open eatery with a big sizzling-plate sign on top
+  sisig: { w: 4400, draw(p) {
+    p.box(-2000, 4000, 1900, 2400, "#fef3c7", "#e9d9a5", "#78350f");
+    for (let i = 0; i < 10; i++) p.P(i % 2 ? "#ffffff" : "#dc2626",   // striped awning
+      [-2050 + i * 410, 1900, -2050 + (i + 1) * 410, 1900, -2020 + (i + 1) * 410, 1550, -2020 + i * 410, 1550]);
+    p.R(-1800, 0, 3600, 1350, "#3f2a1a");                   // dark open front
+    p.R(-1800, 750, 3600, 80, "#a16207");                   // counter
+    for (const tx of [-1200, 0, 1200]) {                    // plates of sisig on the counter
+      p.E(tx, 860, 330, 70, "#111827");
+      p.E(tx, 880, 240, 45, "#9a3412");
+      p.C(tx + 60, 900, 40, "#facc15");                     // egg on top
+    }
+    p.E(0, 2900, 1500, 420, "#111827");                     // giant sizzling plate sign
+    p.E(0, 2950, 1250, 300, "#78350f");
+    for (let i = 0; i < 9; i++) p.C(-900 + i * 225, 2980 + (i % 2) * 70, 90, i % 3 ? "#b45309" : "#dc2626");
+    p.C(0, 3050, 180, "#fde047");
+    for (const sx of [-600, 0, 600]) {                      // steam (wiggles)
+      const w = Math.sin(frame * 0.1 + sx) * 60;
+      p.curve("rgba(255,255,255,0.7)", 70, [sx, 3350, sx + 150 + w, 3600, sx - 150 - w, 3850, sx + w, 4100]);
+    }
+    p.R(-60, 2200, 120, 500, "#475569");
+  }},
+  // Rice field with a carabao and a farmer in a salakot hat
+  ricefield: { w: 5200, draw(p) {
+    p.R(-2600, 0, 5200, 160, "#6aa84f");
+    for (let row = 3; row >= 0; row--) {
+      p.R(-2600, row * 90, 5200, 30, "rgba(125,211,252,0.5)");   // water between the rows
+      for (let i = 0; i < 18; i++) {
+        const px = -2500 + i * 290 + (row % 2) * 140, py = row * 90;
+        p.P("#4d9a34", [px - 70, py, px + 70, py, px, py + 330]);
+        p.P("#6cc04a", [px - 40, py, px + 100, py + 280, px + 30, py]);
+      }
+    }
+    p.E(1200, 650, 650, 330, "#57534e");                    // carabao body
+    p.E(1850, 820, 230, 200, "#57534e");                    // head
+    p.curve("#e7e5e4", 70, [1700, 980, 1600, 1180, 1850, 1250, 1900, 1100]);   // horns
+    p.curve("#e7e5e4", 70, [2000, 980, 2100, 1180, 1850, 1250, 1800, 1100]);
+    for (const lx of [800, 1050, 1350, 1550]) p.R(lx, 150, 110, 400, "#44403c");
+    p.R(-1500, 100, 160, 700, "#1e3a8a");                   // farmer
+    p.R(-1550, 750, 260, 500, "#f5f5f4");
+    p.C(-1420, 1380, 130, "#8d5a3b");
+    p.P("#d6b26b", [-1800, 1430, -1040, 1430, -1420, 1720]); // salakot hat
+  }},
+
+  // BAGUIO: the pink cathedral with twin towers on top of stairs
+  cathedral: { w: 6800, draw(p) {
+    p.R(-3000, 0, 6000, 700, "#a8a29e");                    // stairs up the hill
+    for (let i = 1; i < 6; i++) p.R(-3000 + i * 120, i * 117, 6000 - i * 240, 30, "#d6d3d1");
+    p.box(-2000, 4000, 3200, 2600, "#f4a6b4", "#dc8a9b", "#a3485a", 700);   // rose-pink main church
+    p.P("#f4a6b4", [-2000, 3900, 0, 4900, 2000, 3900]);
+    p.P("#64748b", [-2100, 3900, 0, 5000, 2100, 3900, 1900, 3900, 0, 4800, -1900, 3900]);
+    for (const tx of [-2900, 1800]) {                       // twin square towers with pointed roofs
+      p.box(tx, 1100, 5200, 1100, "#f8b4c0", "#e094a5", null, 700);
+      p.R(tx, 5800, 1100, 100, "#ffffff");
+      p.P("#475569", [tx - 100, 5900, tx + 1200, 5900, tx + 550, 7300]);
+      p.R(tx + 520, 7300, 60, 400, "#ffffff");
+      p.R(tx + 400, 7480, 300, 60, "#ffffff");
+      for (const wy of [2600, 4100]) {
+        p.R(tx + 300, wy + 700, 500, 800, "#1e293b");
+        p.C(tx + 550, wy + 1500, 250, "#1e293b");
+      }
+    }
+    p.C(0, 3300, 450, "#ffffff");                           // round rose window
+    p.C(0, 3300, 360, "#93c5fd");
+    p.P("#f472b6", starPts(0, 3300, 300, 0.4));
+    p.R(-500, 700, 1000, 1500, "#7c2d12");                  // big wooden door
+    p.C(0, 2200, 500, "#7c2d12");
+    for (const wx of [-1600, 1200]) { p.R(wx, 1500, 400, 900, "#93c5fd"); p.C(wx + 200, 2400, 200, "#93c5fd"); }
+    for (let i = 0; i < 6; i++) p.R(-2000, 700 + i * 520, 4000, 20, "rgba(160,60,80,0.25)");
+  }},
+  // Burnham Park: the lake with swan boats, surrounded by pine trees
+  burnham: { w: 7400, draw(p) {
+    p.E(0, 300, 3400, 420, "#94a3b8");                       // lake edge
+    p.E(0, 320, 3200, 360, "#38bdf8");
+    p.E(-800, 380, 1200, 70, "rgba(255,255,255,0.4)");
+    for (const [bx, c] of [[-1800, "#ffffff"], [-300, "#fde047"], [1300, "#ffffff"], [2300, "#f472b6"]]) {
+      const bob = Math.sin(frame * 0.05 + bx) * 30;          // swan boats bobbing
+      p.E(bx, 350 + bob, 380, 180, c);
+      p.curve(c, 110, [bx + 280, 400 + bob, bx + 420, 650 + bob, bx + 300, 850 + bob, bx + 360, 950 + bob]);
+      p.C(bx + 360, 950 + bob, 90, c);
+      p.P("#f97316", [bx + 430, 970 + bob, bx + 560, 930 + bob, bx + 430, 900 + bob]);
+      p.R(bx - 200, 500 + bob, 300, 220, "#334155");        // the rider's seat
+    }
+    for (const tx of [-3500, -2700, 2900, 3600]) drawPine(p, tx, 3800 + (tx % 3) * 200);
+    for (let i = 0; i < 14; i++) p.R(-3300 + i * 470, 0, 50, 350, "#e5e7eb");   // white railing posts
+    p.R(-3300, 300, 6600, 50, "#e5e7eb");
+  }},
+  // Strawberry farm: rows of plants and a giant strawberry sign
+  strawberry: { w: 5600, draw(p) {
+    for (let row = 3; row >= 0; row--) {
+      p.R(-2700, row * 130, 5400, 110, "#7c4a2d");           // soil beds
+      for (let i = 0; i < 16; i++) {
+        const px = -2600 + i * 340 + (row % 2) * 170, py = row * 130 + 100;
+        p.E(px, py + 90, 150, 100, "#3f9e46");
+        if ((i + row) % 2 === 0) p.C(px + 60, py + 50, 55, "#ef4444");
+      }
+    }
+    p.R(-60, 0, 120, 2400, "#78350f");                       // the sign post
+    p.P("#ef4444", [-900, 3600, 900, 3600, 700, 2900, 0, 2200, -700, 2900]);   // giant strawberry
+    p.E(0, 3500, 920, 380, "#ef4444");
+    for (let i = 0; i < 16; i++) p.C(-600 + (i % 5) * 300, 2700 + Math.floor(i / 5) * 280, 35, "#fde68a");
+    p.P("#16a34a", [-700, 3700, 0, 3500, 700, 3700, 350, 3950, 0, 3750, -350, 3950]);   // leaves on top
+  }},
+  // Ube jam shop: purple store with a big jar on the roof
+  ubestore: { w: 3400, draw(p) {
+    p.box(-1500, 3000, 2000, 2200, "#ede9fe", "#d4cdf2", "#6d28d9");
+    for (let i = 0; i < 8; i++) p.P(i % 2 ? "#ffffff" : "#7c3aed",
+      [-1550 + i * 387, 2000, -1550 + (i + 1) * 387, 2000, -1520 + (i + 1) * 387, 1650, -1520 + i * 387, 1650]);
+    p.R(-1300, 300, 1700, 1100, "#c4b5fd");                  // shelves full of ube jars
+    for (let r = 0; r < 2; r++) for (let i = 0; i < 5; i++) {
+      p.R(-1200 + i * 330, 380 + r * 500, 220, 300, "#6d28d9");
+      p.R(-1210 + i * 330, 680 + r * 500, 240, 70, "#ffffff");
+    }
+    p.R(600, 0, 700, 1400, "#4c1d95");
+    p.R(-600, 2000, 1200, 1300, "#6d28d9");                  // giant jar on the roof
+    p.R(-680, 3250, 1360, 300, "#ffffff");
+    p.E(0, 2650, 450, 300, "#ede9fe");
+  }},
+  // A small group of pine trees (Baguio roadside)
+  pines: { w: 2600, draw(p, o) {
+    drawPine(p, -800, 3200 + o.variant * 1500);
+    drawPine(p, 700, 4200 - o.variant * 1000);
+    drawPine(p, 0, 2600);
+  }},
+
+  // ILOCOS: Vigan heritage houses (Calle Crisologo): stone below, wood and capiz windows above
+  vigan: { w: 8400, draw(p) {
+    p.R(-4200, 0, 8400, 120, "#78716c");                     // cobblestone street
+    for (let i = 0; i < 40; i++) p.E(-4100 + i * 210, 60, 80, 35, i % 2 ? "#a8a29e" : "#8a837c");
+    for (const [hx, wall] of [[-4000, "#e7e0d4"], [100, "#efe7d8"]]) {
+      p.box(hx, 3900, 1700, 2600, wall, "#cfc6b6", null, 120);   // whitewashed stone ground floor
+      for (const ax of [hx + 300, hx + 1500, hx + 2700]) {
+        p.R(ax, 120, 800, 1000, "#57412c");
+        p.C(ax + 400, 1120, 400, "#57412c");
+      }
+      p.box(hx - 200, 4300, 1500, 2700, "#5b3a22", "#47301c", null, 1820);   // dark wooden upper floor
+      for (let i = 0; i < 4; i++) {                          // capiz shell windows
+        const wx = hx + i * 1050;
+        p.R(wx, 1950, 900, 1100, "#3b2516");
+        for (let r = 0; r < 4; r++) for (let c2 = 0; c2 < 4; c2++) p.R(wx + 40 + c2 * 215, 1990 + r * 260, 185, 230, "#f5ecd6");
+      }
+      p.P("#9a3412", [hx - 500, 3320, hx + 4400, 3320, hx + 3800, 4300, hx + 100, 4300]);   // red clay tile roof
+      for (let i = 1; i < 5; i++) p.R(hx - 500 + i * 120, 3320 + i * 200, 4900 - i * 240, 30, "#7c2d12");
+    }
+    for (const lx of [-4150, 4050]) {                        // old-style street lamps
+      p.R(lx - 40, 0, 80, 2600, "#1f2937");
+      p.R(lx - 200, 2600, 400, 450, "#1f2937");
+      p.R(lx - 140, 2650, 280, 330, `rgba(253,224,71,${0.5 + darkness() * 0.5})`);
+    }
+  }},
+  // Paoay Church: earthquake-proof coral stone church with huge side buttresses
+  paoay: { w: 8600, draw(p) {
+    const stone = "#b08b5e", dark = "#8a6a43", light = "#c9a777";
+    p.box(-2600, 5200, 3600, 2800, stone, dark, null);
+    // stepped top edge, with a little stone point (finial) on each step
+    const steps = [[-2000, 4300], [-1200, 4600], [-600, 5400], [0, 5800], [600, 5400], [1200, 4600], [2000, 4300]];
+    p.P(stone, [-2600, 3600, ...steps.flat(), 2600, 3600]);
+    for (const [fx, fy] of steps) p.P(light, [fx - 120, fy, fx + 120, fy, fx, fy + 400]);
+    for (const side of [-1, 1]) {                            // the giant buttresses on both sides
+      const bx = side * 2600;
+      p.P(dark, [bx, 0, bx + side * 1500, 0, bx, 3300]);
+      p.P(stone, [bx, 0, bx + side * 900, 0, bx, 2600]);
+    }
+    for (let i = 1; i < 9; i++) p.R(-2600, i * 400, 5200, 25, "rgba(90,60,30,0.25)");   // coral stone blocks
+    for (const px of [-1900, -1100, 900, 1700]) p.R(px, 0, 220, 3600, light);   // flat columns
+    p.R(-500, 0, 1000, 1600, "#4a3520");                     // arched door
+    p.C(0, 1600, 500, "#4a3520");
+    p.C(0, 2700, 280, "#4a3520");                            // round window
+    for (const wx of [-1500, 1300]) { p.R(wx, 1900, 220, 600, "#4a3520"); p.C(wx + 110, 2500, 110, "#4a3520"); }
+    for (let i = 0; i < 18; i++) p.C(-2400 + i * 280, 3300 + Math.sin(i) * 200, 70, "rgba(74,124,60,0.6)");   // moss
+  }},
+  // Empanada stall (Vigan empanada: orange and crispy)
+  empanada: { w: 3000, draw(p) {
+    p.box(-1300, 2600, 1500, 1800, "#fff7ed", "#f2dcc3", "#c2410c");
+    for (let i = 0; i < 7; i++) p.P(i % 2 ? "#ffffff" : "#ea580c",
+      [-1350 + i * 386, 1500, -1350 + (i + 1) * 386, 1500, -1320 + (i + 1) * 386, 1200, -1320 + i * 386, 1200]);
+    p.R(-1100, 0, 2200, 1100, "#44291a");
+    p.E(-500, 900, 300, 120, "#f97316");                     // empanadas frying
+    p.E(400, 900, 300, 120, "#fb923c");
+    p.P("#ea580c", [-900, 2100, 900, 2100, 700, 2500, 0, 2700, -700, 2500]);   // big empanada sign
+    for (let i = 0; i < 7; i++) p.C(-750 + i * 250, 2150, 70, "#c2410c");
+    p.R(-60, 1500, 120, 600, "#475569");
+  }},
+  // A Bangui wind turbine standing right next to the road (the blades turn!)
+  windmill: { w: 3200, draw(p, o) {
+    p.P("#f8fafc", [-260, 0, 260, 0, 110, 8200, -110, 8200]);
+    p.P("#dfe5ec", [0, 0, 260, 0, 110, 8200, 0, 8200]);
+    p.box(-300, 900, 450, 500, "#f1f5f9", "#cbd5e1", null, 7950);   // the box at the top
+    const turn = frame * 0.03 + o.variant * 6;
+    for (let i = 0; i < 3; i++) {
+      const a = turn + (i * Math.PI * 2) / 3;
+      const ex = Math.cos(a) * 3800, ey = 8180 + Math.sin(a) * 3800;
+      const nx = -Math.sin(a) * 160, ny = Math.cos(a) * 160;
+      p.P("#ffffff", [nx, 8180 + ny, ex, ey, -nx, 8180 - ny]);
+    }
+    p.C(0, 8180, 220, "#e2e8f0");
+  }},
+  // Old street lamp (Ilocos roadside)
+  lamppost: { w: 900, draw(p) {
+    p.R(-60, 0, 120, 3000, "#1f2937");
+    p.R(-200, 3000, 400, 500, "#1f2937");
+    p.C(0, 3250, 380, `rgba(253,224,71,${0.1 + darkness() * 0.35})`);
+    p.R(-140, 3050, 280, 380, `rgba(253,230,138,${0.6 + darkness() * 0.4})`);
+    p.P("#1f2937", [-260, 3500, 260, 3500, 0, 3800]);
+  }},
+});
+
+// A pine tree drawn with the landmark painter (layers of dark green triangles)
+function drawPine(p, x, h) {
+  p.R(x - 70, 0, 140, h * 0.25, "#5b3a22");
+  for (let i = 0; i < 4; i++) {
+    const y0 = h * (0.15 + i * 0.2), wdt = h * (0.32 - i * 0.065);
+    p.P(i % 2 ? "#2f5c47" : "#264d3b", [x - wdt, y0, x + wdt, y0, x, y0 + h * 0.38]);
+  }
+}
+// A pine tree beside the road in Baguio (instead of the usual trees)
+function drawPineTree(x, y, size) {
+  const h = size * 1.15;
+  ctx.fillStyle = "#5b3a22";
+  ctx.fillRect(x - h * 0.03, y - h * 0.25, h * 0.06, h * 0.25);
+  for (let i = 0; i < 4; i++) {
+    const y0 = y - h * (0.12 + i * 0.2), wdt = h * (0.24 - i * 0.045);
+    poly(i % 2 ? "#2f5c47" : "#264d3b", [x - wdt, y0, x + wdt, y0, x, y0 - h * 0.36]);
+  }
+}
+
 
 // Draws a palm tree in place of a normal roadside tree (Calamba)
 function drawPalmTree(x, y, size) {
@@ -3068,7 +4710,8 @@ Object.assign(LANDMARKS, {
 function drawPed(ped, x, y, k, fog) {
   const p = landPainter(x, y, k);
   const L = ped.look;
-  const walking = ped.delay <= 0 && Math.abs(ped.x) < 1.38;
+  const waiting = crossing && relZ(crossing.z, playerZ()) < 32 * SEG_LEN;
+  const walking = ped.delay <= 0 && Math.abs(ped.x) < 1.38 && !waiting;
   const swing = walking ? Math.sin(ped.step * 0.25) * 60 : 0;   // legs and arms swing while walking
   p.E(0, 0, 150, 30, "rgba(0,0,0,0.25)");             // shadow
   p.P(L.pants, [-55, 260, 5, 260, 5 + swing, 0, -55 + swing, 0]);   // legs
@@ -3108,6 +4751,41 @@ function drawCrossing(drawn) {
   }
 }
 
+// ----- TAG-INIT (hot season) heat haze for Calamba -----
+// The finished picture is copied to a hidden canvas, then pasted back in thin
+// horizontal strips, each strip pushed a little left or right by a smooth wave.
+// That makes the road "wiggle" like hot air. It's just ~100 image copies per
+// frame (fast for the browser), so it doesn't slow the game down.
+const heatBuf = document.createElement("canvas");
+heatBuf.width = W;
+heatBuf.height = H;
+const heatCtx = heatBuf.getContext("2d");
+let heat = 0;                                         // 0 = normal, 1 = full heat
+
+function applyHeat() {
+  if (heat < 0.01) return;
+  heatCtx.drawImage(canvas, 0, 0);                    // copy the finished picture
+  const t = frame * 0.05;
+  const top = HORIZON - 70;
+  const STRIP = 4;
+  for (let y = top; y < H; y += STRIP) {
+    const near = (y - top) / (H - top);               // 0 = far (horizon), 1 = close
+    const amp = heat * (9 * (1 - near) + 1.5);        // stronger far away, over the hot road
+    const dx = Math.sin(y * 0.07 + t) * amp + Math.sin(y * 0.021 - t * 0.6) * amp * 0.5;
+    ctx.drawImage(heatBuf, 0, y, W, STRIP, dx, y, W, STRIP);
+  }
+  // warm orange tint over everything
+  ctx.fillStyle = `rgba(255,140,40,${0.13 * heat})`;
+  ctx.fillRect(0, 0, W, H);
+  // mirage: a bright, shimmering band near the horizon that hides the far road
+  const g = ctx.createLinearGradient(0, HORIZON - 25, 0, HORIZON + 70);
+  g.addColorStop(0, "rgba(255,245,225,0)");
+  g.addColorStop(0.35, `rgba(255,245,225,${0.6 * heat})`);
+  g.addColorStop(1, "rgba(255,245,225,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, HORIZON - 25, W, 95);
+}
+
 // ----- 15. DRAW everything -----
 function drawLayer(layer, offset) {
   const x = -(((offset % LAYER_W) + LAYER_W) % LAYER_W);
@@ -3117,6 +4795,9 @@ function drawLayer(layer, offset) {
 
 // Where the road disappears on the horizon (updated every frame in drawWorld)
 let vanishX = W / 2;
+let groundTop = HORIZON;   // the highest point of ground on screen (hills can rise above the horizon)
+let fgBoxes = [];          // screen areas of things standing in front of the sky
+let lean = 0;              // camera tilt (radians) on curves and lane changes
 
 // Where the player's car is on the screen
 function playerScreen() {
@@ -3153,6 +4834,68 @@ function outlinedText(text, x, y, size, fill, stroke = "#1e293b", lineW = size /
 }
 
 // Icon for each power-up (used on the road and in the corner display)
+// A Filipino traffic enforcer (feet at x, y; about h pixels tall).
+// wave: -1..1 moves the raised arm that waves the traffic away.
+function drawEnforcer(x, y, h, wave = 0) {
+  const u = h / 100;                                       // 1 unit = 1% of the height
+  const R = (x0, y0, w0, h0, c) => { ctx.fillStyle = c; ctx.fillRect(x + x0 * u, y - y0 * u, w0 * u, h0 * u); };
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.3)";                       // shadow
+  ctx.beginPath(); ctx.ellipse(x, y, 20 * u, 4 * u, 0, 0, Math.PI * 2); ctx.fill();
+  R(-11, 46, 9, 44, "#1e293b");                            // dark blue pants
+  R(2, 46, 9, 44, "#1e293b");
+  R(-13, 4, 12, 4, "#0b0b0b");                             // black shoes
+  R(1, 4, 12, 4, "#0b0b0b");
+  R(-14, 80, 28, 36, "#7dd3fc");                           // light blue polo
+  R(-15, 78, 30, 32, "#a3e635");                           // reflective vest
+  R(-15, 66, 30, 3, "#e5e7eb");                            // silver reflective stripes
+  R(-15, 56, 30, 3, "#e5e7eb");
+  R(-2, 78, 4, 32, "#7dd3fc");                             // vest opening
+  R(-16, 48, 32, 4, "#111827");                            // belt
+  R(-2, 48, 4, 4, "#d4a017");
+  // left arm holding the orange glowing baton (down by the side)
+  R(-19, 78, 6, 24, "#7dd3fc");
+  R(-19, 55, 6, 4, "#8d5a3b");
+  const glow = ctx.createRadialGradient(x - 22 * u, y - 45 * u, 0, x - 22 * u, y - 45 * u, 14 * u);
+  glow.addColorStop(0, "rgba(251,146,60,0.7)");
+  glow.addColorStop(1, "rgba(251,146,60,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(x - 36 * u, y - 60 * u, 28 * u, 30 * u);
+  ctx.save();
+  ctx.translate(x - 16 * u, y - 54 * u);
+  ctx.rotate(0.35);
+  ctx.fillStyle = "#fb923c";
+  ctx.fillRect(-2 * u, 0, 4 * u, 22 * u);
+  ctx.fillStyle = "#fed7aa";
+  ctx.fillRect(-0.5 * u, 2 * u, 1.5 * u, 18 * u);
+  ctx.restore();
+  // right arm raised high with a white glove, waving the traffic away
+  ctx.save();
+  ctx.translate(x + 13 * u, y - 77 * u);
+  ctx.rotate(-2.5 + wave * 0.4);
+  ctx.fillStyle = "#7dd3fc";
+  ctx.fillRect(-3 * u, 0, 6 * u, 15 * u);
+  ctx.fillStyle = "#8d5a3b";
+  ctx.fillRect(-2.5 * u, 15 * u, 5 * u, 9 * u);
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath(); ctx.arc(0, 27 * u, 4.5 * u, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  // head: face, sunglasses, whistle, cap
+  R(-3, 84, 6, 5, "#8d5a3b");                              // neck
+  ctx.fillStyle = "#8d5a3b";
+  ctx.beginPath(); ctx.arc(x, y - 91 * u, 8 * u, 0, Math.PI * 2); ctx.fill();
+  R(-7, 94, 14, 3, "#0f172a");                             // sunglasses
+  R(2, 88, 7, 3, "#d1d5db");                               // whistle in the mouth
+  ctx.strokeStyle = "#ef4444";                             // whistle cord
+  ctx.lineWidth = 1.2 * u;
+  ctx.beginPath(); ctx.moveTo(x + 6 * u, y - 87 * u); ctx.quadraticCurveTo(x + 9 * u, y - 80 * u, x + 3 * u, y - 76 * u); ctx.stroke();
+  R(-9, 103, 18, 7, "#f8fafc");                            // white cap
+  R(-9, 98, 18, 3, "#1d4ed8");                             // blue band
+  R(-2, 99, 4, 4, "#facc15");                              // badge
+  R(0, 97, 13, 2.5, "#0f172a");                            // visor
+  ctx.restore();
+}
+
 function drawPowerIcon(kind, x, y, r) {
   ctx.fillStyle = "#ffffff";
   ctx.strokeStyle = "#ffffff";
@@ -3170,13 +4913,19 @@ function drawPowerIcon(kind, x, y, r) {
     ctx.fillStyle = "#1e293b";
     ctx.fillRect(x - 0.47 * r, y - 0.55 * r, 0.24 * r, 0.16 * r);
     ctx.fillRect(x + 0.23 * r, y - 0.55 * r, 0.24 * r, 0.16 * r);
-  } else if (kind === "walis") {   // a broom
-    ctx.lineWidth = 0.13 * r;
+  } else if (kind === "enforcer") {   // a whistle
     ctx.beginPath();
-    ctx.moveTo(x + 0.45 * r, y - 0.55 * r);
-    ctx.lineTo(x - 0.05 * r, y + 0.05 * r);
+    ctx.arc(x - 0.1 * r, y + 0.1 * r, 0.36 * r, 0, Math.PI * 2);   // round body
+    ctx.fill();
+    ctx.fillRect(x - 0.1 * r, y - 0.26 * r, 0.65 * r, 0.3 * r);     // mouthpiece
+    ctx.lineWidth = 0.1 * r;
+    ctx.beginPath();
+    ctx.arc(x - 0.42 * r, y - 0.32 * r, 0.16 * r, 0, Math.PI * 2);  // ring for the cord
     ctx.stroke();
-    poly("#ffffff", [x - 0.05 * r, y - 0.05 * r, x + 0.12 * r, y + 0.12 * r, x - 0.25 * r, y + 0.6 * r, x - 0.55 * r, y + 0.3 * r]);
+    ctx.fillStyle = POWERS.enforcer.color;
+    ctx.beginPath();
+    ctx.arc(x - 0.1 * r, y + 0.1 * r, 0.13 * r, 0, Math.PI * 2);    // hole
+    ctx.fill();
   } else {   // slow-mo: a clock
     ctx.lineWidth = 0.13 * r;
     ctx.beginPath();
@@ -3191,19 +4940,167 @@ function drawPowerIcon(kind, x, y, r) {
   }
 }
 
-// A floating power-up bubble on the road
+// A floating power-up on the road: a beam of light, a glowing ring on the road,
+// sparkles going round it, and a shiny bubble with the icon (and its name up close)
 function drawPowerUp(kind, x, y, w) {
-  const r = w * 0.17;
-  const cy = y - r * 1.7 - Math.sin(frame * 0.1) * r * 0.25;   // bobs up and down
-  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  const col = POWERS[kind].color, rgb = rgbOf(col);
+  const r = w * 0.22;
+  if (r < 1.5) return;
+  const pulse = 0.5 + 0.5 * Math.sin(frame * 0.15);
+  const cy = y - r * 1.9 - Math.sin(frame * 0.1) * r * 0.25;   // bobs up and down
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  // beam of light going up from the road (easy to spot far away)
+  const beam = ctx.createLinearGradient(0, y, 0, y - r * 7);
+  beam.addColorStop(0, `rgba(${rgb},0.45)`);
+  beam.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = beam;
+  ctx.fillRect(x - r * 0.7, y - r * 7, r * 1.4, r * 7);
+  // glowing ring on the road
+  ctx.strokeStyle = `rgba(${rgb},${0.5 + pulse * 0.4})`;
+  ctx.lineWidth = Math.max(1, r * 0.14);
   ctx.beginPath();
-  ctx.arc(x, cy, r * 1.3, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = POWERS[kind].color;
+  ctx.ellipse(x, y, r * (1.3 + pulse * 0.3), r * (0.32 + pulse * 0.08), 0, 0, Math.PI * 2);
+  ctx.stroke();
+  // soft halo around the bubble
+  const halo = ctx.createRadialGradient(x, cy, r * 0.6, x, cy, r * 2.2);
+  halo.addColorStop(0, `rgba(${rgb},${0.45 + pulse * 0.25})`);
+  halo.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = halo;
+  ctx.fillRect(x - r * 2.2, cy - r * 2.2, r * 4.4, r * 4.4);
+  ctx.restore();
+  // sparkles going round
+  for (let i = 0; i < 3; i++) {
+    const a = frame * 0.07 + (i * Math.PI * 2) / 3;
+    const sx = x + Math.cos(a) * r * 1.5, sy = cy + Math.sin(a) * r * 0.5;
+    const sr = r * 0.16 * (Math.sin(a) > 0 ? 1.2 : 0.8);
+    poly("#ffffff", [sx, sy - sr * 2, sx + sr * 0.5, sy, sx, sy + sr * 2, sx - sr * 0.5, sy]);
+    poly("#ffffff", [sx - sr * 2, sy, sx, sy - sr * 0.5, sx + sr * 2, sy, sx, sy + sr * 0.5]);
+  }
+  // the bubble: lighter in the middle, white rim, shine on top
+  const ball = ctx.createRadialGradient(x - r * 0.3, cy - r * 0.35, r * 0.1, x, cy, r);
+  ball.addColorStop(0, "#ffffff");
+  ball.addColorStop(0.25, col);
+  ball.addColorStop(1, `rgba(${rgb},0.85)`);
+  ctx.fillStyle = ball;
   ctx.beginPath();
   ctx.arc(x, cy, r, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = Math.max(1, r * 0.12);
+  ctx.stroke();
   drawPowerIcon(kind, x, cy, r);
+  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  ctx.beginPath();
+  ctx.ellipse(x - r * 0.35, cy - r * 0.5, r * 0.3, r * 0.15, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  if (r > 13) outlinedText(POWERS[kind].label, x, cy - r * 1.75, Math.min(22, r * 0.6), col);
+}
+
+// Effects on and around YOUR car while a power-up is on.
+// behind = true: things drawn before the car; false: things drawn on top of it.
+function drawPlayerPowerFx(p, behind) {
+  const cx = p.x, cy = p.y - p.w * 0.35;
+  if (behind) {
+    // SLOW-MO: purple afterimages where the car just was, and slow ripples on the road
+    if (slowT > 0) {
+      for (let i = ghostXs.length - 1; i >= 0; i -= 4) {
+        const gx = ghostXs[i];
+        if (Math.abs(gx - cx) < 3) continue;
+        ctx.globalAlpha = 0.18 * (1 - i / ghostXs.length);
+        drawPlayerVehicle(ptype(), gx, p.y, p.w);
+      }
+      ctx.globalAlpha = 1;
+      for (let i = 0; i < 3; i++) {
+        const t = ((frame * 0.6 + i * 40) % 120) / 120;
+        ctx.strokeStyle = `rgba(168,85,247,${0.55 * (1 - t)})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.ellipse(cx, p.y, p.w * (0.5 + t * 0.9), p.w * (0.08 + t * 0.14), 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    // MAGNET: red waves going out in front of the car, pulling coins in
+    if (magnetT > 0) {
+      for (let i = 0; i < 4; i++) {
+        const t = ((frame * 1.2 + i * 30) % 120) / 120;   // 0 = at the car, 1 = far ahead
+        const wy = p.y - p.w * 0.2 - t * p.w * 1.6;
+        const ww = p.w * (0.9 - t * 0.55);
+        ctx.strokeStyle = `rgba(239,68,68,${0.7 * (1 - t)})`;
+        ctx.lineWidth = 4 * (1 - t) + 1;
+        ctx.beginPath();
+        ctx.ellipse(cx, wy, ww, ww * 0.18, 0, Math.PI, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    return;
+  }
+  // SHIELD: a shiny blue bubble with a light that goes round it
+  if (shield) {
+    const rx = p.w * 0.72, ry = p.w * 0.6;
+    const bub = ctx.createRadialGradient(cx, cy, rx * 0.4, cx, cy, rx);
+    bub.addColorStop(0, "rgba(56,189,248,0.05)");
+    bub.addColorStop(1, `rgba(56,189,248,${0.32 + Math.sin(frame * 0.15) * 0.1})`);
+    ctx.fillStyle = bub;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(125,211,252,0.9)";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    const a = frame * 0.06;
+    ctx.strokeStyle = "rgba(255,255,255,0.95)";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, a, a + 0.7);
+    ctx.stroke();
+  }
+  // A small badge above the car for each timed power-up, with a ring that empties
+  const timed = [];
+  if (magnetT > 0) timed.push(["magnet", magnetT / magnetMax]);
+  if (slowT > 0) timed.push(["slowmo", slowT / slowMax]);
+  if (clearT > 0) timed.push(["enforcer", clearT / ENFORCER_TIME]);
+  const br = Math.max(10, p.w * 0.1);
+  timed.forEach(([kind, left], i) => {
+    if (left < 0.25 && Math.floor(frame / 6) % 2) return;   // blinks when almost over
+    const bx = cx + (i - (timed.length - 1) / 2) * br * 2.6;
+    const by = p.y - p.w * 0.95 - Math.sin(frame * 0.1 + i) * 3;
+    ctx.fillStyle = "rgba(15,23,42,0.75)";
+    ctx.beginPath();
+    ctx.arc(bx, by, br * 1.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = POWERS[kind].color;
+    ctx.lineWidth = br * 0.25;
+    ctx.beginPath();
+    ctx.arc(bx, by, br * 1.2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left);
+    ctx.stroke();
+    ctx.fillStyle = POWERS[kind].color;
+    ctx.beginPath();
+    ctx.arc(bx, by, br * 0.85, 0, Math.PI * 2);
+    ctx.fill();
+    drawPowerIcon(kind, bx, by, br * 0.85);
+  });
+  // The burst when you grab one: a ring grows from the car and the icon pops up
+  if (pfx) {
+    const t = pfx.t / 45, col = POWERS[pfx.kind].color;
+    ctx.strokeStyle = `rgba(${rgbOf(col)},${1 - t})`;
+    ctx.lineWidth = 6 * (1 - t) + 1;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, p.w * (0.4 + t * 1.2), p.w * (0.3 + t * 0.7), 0, 0, Math.PI * 2);
+    ctx.stroke();
+    const ir = p.w * 0.16 * (t < 0.2 ? t / 0.2 * 1.3 : 1.3 - (t - 0.2) * 0.4);
+    const iy = cy - p.w * 0.5 - t * p.w * 0.5;
+    ctx.globalAlpha = Math.min(1, (1 - t) * 2);
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(cx, iy, ir, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    drawPowerIcon(pfx.kind, cx, iy, ir);
+    ctx.globalAlpha = 1;
+  }
 }
 
 // Turn signal: big blinking orange lights on the side the vehicle is moving to
@@ -3268,10 +5165,13 @@ function drawWorld() {
     ctx.globalAlpha = bgWeight[key];
     drawLayer(backdrops[key], bgOffset * 0.6);
   }
-  ctx.globalAlpha = 1 - bgWeight.taal * 0.85;     // fewer hills so Taal Lake shows
+  // fewer green hills so Taal Lake and the Manila buildings show
+  drawWindmillBlades();                           // Ilocos: the turbines turn
+  ctx.globalAlpha = Math.max(0, 1 - bgWeight.taal * 0.85 - bgWeight.manila * 0.95
+    - bgWeight.arayat * 0.8 - bgWeight.baguio * 0.9 - bgWeight.ilocos * 0.9);
   drawLayer(hillLayer, bgOffset);
   ctx.globalAlpha = 1;
-  ctx.fillStyle = fogged(COL.grass1, 1);
+  ctx.fillStyle = fogged(GRASS.g1, 1);
   ctx.fillRect(0, HORIZON, W, H - HORIZON);
 
   // --- Road: project the segments from near to far ---
@@ -3280,7 +5180,9 @@ function drawWorld() {
   let x = 0;
   let dx = -base.curve * basePct;
   let maxY = H;
-  const drawn = [];
+  const drawn = [];                       // road pieces we can see
+  const projected = [];                   // all pieces in front of the camera (some hidden behind a hill)
+  const camY = CAM_H + heightAt(playerZ()); // the camera rides up and down with the road
 
   for (let n = 0; n < DRAW_DIST; n++) {
     const seg = segments[(base.index + n) % segments.length];
@@ -3288,22 +5190,28 @@ function drawWorld() {
     const camZ = position - (looped ? TRACK_LEN : 0);
     const camX = cameraX * ROAD_W;
 
-    project(seg.z1, camX - x, camZ, seg.s1);
-    project(seg.z2, camX - x - dx, camZ, seg.s2);
+    project(seg.z1, camX - x, camZ, seg.s1, seg.y1, camY);
+    project(seg.z2, camX - x - dx, camZ, seg.s2, seg.y2, camY);
     x += dx;               // add up the curves: this is what bends the road
     dx += seg.curve;
 
     seg.fog = Math.min(1, Math.pow(n / DRAW_DIST, 1.5) * 1.1);
     seg.dist = odo + n * SEG_LEN;          // total distance of this piece of road
-    seg.seen = seg.s1.cz > CAM_DEPTH && seg.s2.y < maxY;
-    if (!seg.seen) continue;
+    // clip = the line where the nearer road (a hilltop) covers things on this piece
+    seg.clip = maxY;
+    if (seg.s1.cz <= CAM_DEPTH) continue;
+    projected.push(seg);
+    if (seg.s2.y >= maxY) continue;       // hidden behind a hilltop: don't draw the road
 
     drawn.push(seg);
     maxY = seg.s1.y;
   }
-  const drawnSet = new Set(drawn);
-
+  const projSet = new Set(projected);
   if (drawn.length) vanishX = drawn[drawn.length - 1].s2.x;   // the farthest road piece
+  groundTop = drawn.reduce((m, sg) => Math.min(m, sg.s2.y), HORIZON);   // highest ground on screen
+  fgBoxes = [];
+  // remembers the screen area of something standing up into the sky (for Manila's lights)
+  const box = (x0, y0, x1, y1) => { if (y0 < HORIZON) fgBoxes.push({ x0, y0, x1, y1 }); };
 
   // Road pieces are painted far → near so near pieces cover far ones
   for (let i = drawn.length - 1; i >= 0; i--) drawSegment(drawn[i], drawn[i].fog);
@@ -3314,7 +5222,7 @@ function drawWorld() {
   const things = [];
   const lights = [];
 
-  for (const seg of drawn) {
+  for (const seg of projected) {
     const loc = locationAt(seg.dist);
     for (const sp of seg.sprites) {
       if (loc.fillers && !sp.keep) continue;   // towns: only a few trees, buildings instead
@@ -3324,8 +5232,10 @@ function drawWorld() {
       if (insideBuilding) continue;
       const sx = seg.s1.x + seg.s1.scale * sp.offset * ROAD_W * W / 2;
       const size = seg.s1.scale * TREE_H * sp.size * W / 2;
-      things.push({ depth: seg.s1.cz, fog: seg.fog, draw: () => {
+      things.push({ depth: seg.s1.cz, fog: seg.fog, clip: seg.clip, draw: () => {
+        box(sx - size * 0.45, seg.s1.y - size * 1.05, sx + size * 0.45, seg.s1.y);
         if (loc.palms) drawPalmTree(sx, seg.s1.y, size);
+        else if (loc.pines) drawPineTree(sx, seg.s1.y, size);
         else if (sp.type === "tree") drawTree(sx, seg.s1.y, size);
         else drawBush(sx, seg.s1.y, size * 0.5);
       }});
@@ -3335,19 +5245,26 @@ function drawWorld() {
   // Vehicles, coins and power-ups sit between the two ends of their segment
   const placeOnRoad = (obj, drawFn) => {
     const seg = findSegment(obj.z);
-    if (!drawnSet.has(seg)) return;
+    if (!projSet.has(seg)) return;
     const t = (obj.z % SEG_LEN) / SEG_LEN;
     const lerp = (a, b) => a + (b - a) * t;
     const scale = lerp(seg.s1.scale, seg.s2.scale);
     const sx = lerp(seg.s1.x, seg.s2.x) + scale * obj.x * ROAD_W * W / 2;
     const sy = lerp(seg.s1.y, seg.s2.y);
     const k = scale * W / 2;                   // screen pixels per world unit here
-    things.push({ depth: lerp(seg.s1.cz, seg.s2.cz), fog: seg.fog, draw: () => drawFn(sx, sy, k, seg.fog) });
+    things.push({ depth: lerp(seg.s1.cz, seg.s2.cz), fog: seg.fog, clip: seg.clip, draw: () => drawFn(sx, sy, k, seg.fog) });
   };
 
-  for (const car of (clearT > 0 ? [] : cars)) {     // WALIS: no traffic to draw
+  // ENFORCER: for the first half second the vehicles slide off to the side, then they're gone
+  const exitP = clearT > 0 ? (ENFORCER_TIME - clearT) / 30 : 0;
+  for (const car of (clearT > 0 && exitP >= 1 ? [] : cars)) {
     placeOnRoad(car, (sx, sy, k, fog) => {
       const w = VEHICLES[car.type].w * k;
+      if (clearT > 0) {
+        sx += (car.exitDir || 1) * exitP * exitP * w * 3.5;   // speeds up as it goes
+        ctx.globalAlpha *= 1 - exitP * 0.6;
+      }
+      box(sx - w * 0.65, sy - VEHICLES[car.type].h * w * 1.1, sx + w * 0.65, sy);
       drawVehicle(car, sx, sy, k);
       drawBlinker(car, sx, sy, w);
       if (car.brakeT > 0) drawPara(sx, sy, w);
@@ -3362,7 +5279,9 @@ function drawWorld() {
   }
   for (const sc of scenery) {
     // only PUP keeps its name sign; other buildings have no text
-    placeOnRoad(sc, (sx, sy, k) => LANDMARKS[sc.kind].draw(landPainter(sx, sy, k * sc.scale, ["pup", "welcome", "caution"].includes(sc.kind)), sc));
+    placeOnRoad(sc, (sx, sy, k) => (box(sx - LANDMARKS[sc.kind].w * sc.scale * k * 0.6,
+      sy - LANDMARKS[sc.kind].w * sc.scale * k * 1.1, sx + LANDMARKS[sc.kind].w * sc.scale * k * 0.6, sy),
+      LANDMARKS[sc.kind].draw(landPainter(sx, sy, k * sc.scale, ["pup", "welcome", "caution"].includes(sc.kind)), sc)));
   }
   for (const p of pickups) placeOnRoad(p, (sx, sy, k) => drawPowerUp(p.kind, sx, sy, k * CAR_W));
 
@@ -3372,23 +5291,37 @@ function drawWorld() {
     const moving = mode === "playing" || mode === "home" || mode === "countdown";
     const bounce = moving && !paused && Math.floor(frame / 5) % 2 ? 1.5 : 0;  // engine wobble
     const blinkOff = invulnT > 0 && Math.floor(frame / 4) % 2;               // flicker after the shield breaks
-    if (!blinkOff) drawPlayerVehicle(ptype(), p.x, p.y - bounce, p.w);
-    if (shield) {            // see-through bubble around the car
-      ctx.strokeStyle = `rgba(56,189,248,${0.6 + Math.sin(frame * 0.15) * 0.25})`;
-      ctx.fillStyle = "rgba(56,189,248,0.15)";
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.ellipse(p.x, p.y - p.w * 0.35, p.w * 0.7, p.w * 0.55, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+    box(p.x - p.w * 0.7, p.y - p.w * 1.7, p.x + p.w * 0.7, p.y);
+    // remember recent positions for the slow-mo afterimages
+    if (slowT > 0 && !paused) { ghostXs.unshift(p.x); if (ghostXs.length > 16) ghostXs.pop(); }
+    else if (slowT <= 0) ghostXs.length = 0;
+    drawPlayerPowerFx(p, true);
+    if (!blinkOff) {
+      ctx.save();                                    // lean the car while changing lanes
+      ctx.translate(p.x, p.y);
+      ctx.rotate(tilt);
+      ctx.translate(-p.x, -p.y);
+      drawPlayerVehicle(ptype(), p.x, p.y - bounce, p.w);
+      ctx.restore();
     }
+    drawPlayerPowerFx(p, false);
     lights.push({ x: p.x, y: p.y, w: p.w, fog: 0, player: true });
   }});
 
   things.sort((a, b) => b.depth - a.depth);
   for (const t of things) {
     ctx.globalAlpha = 1 - t.fog * 0.85;   // far things fade into the haze
-    t.draw();
+    if (t.clip !== undefined && t.clip < H - 1) {
+      // behind a hilltop: only draw the part above the hill's edge
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(-100, -100, W + 200, t.clip + 100);
+      ctx.clip();
+      t.draw();
+      ctx.restore();
+    } else {
+      t.draw();
+    }
   }
   ctx.globalAlpha = 1;
   return lights;
@@ -3473,7 +5406,17 @@ function glow(x, y, r, color, alpha) {
 
 // Sunset colors, night darkness, rain, glowing lights and slow-mo tint
 function drawAtmosphere(lights) {
-  const { night, sunset, rain } = atmo;
+  const { night, sunset, rain, mist } = atmo;
+
+  if (mist > 0.01) {             // Baguio fog: thick near the horizon, thinner close to you
+    const m = ctx.createLinearGradient(0, 0, 0, H);
+    m.addColorStop(0, `rgba(232,238,242,${0.35 * mist})`);
+    m.addColorStop(HORIZON / H, `rgba(236,241,244,${0.6 * mist})`);
+    m.addColorStop(0.62, `rgba(236,241,244,${0.18 * mist})`);
+    m.addColorStop(1, `rgba(236,241,244,${0.08 * mist})`);
+    ctx.fillStyle = m;
+    ctx.fillRect(0, 0, W, H);
+  }
 
   if (sunset > 0.01) {
     const g = ctx.createLinearGradient(0, 0, 0, H);
@@ -3487,11 +5430,14 @@ function drawAtmosphere(lights) {
     ctx.fillStyle = `rgba(8,14,45,${0.62 * night})`;
     ctx.fillRect(0, 0, W, H);
     for (const s of stars) {
+      if (s.y > groundTop - 4) continue;             // no stars on a hill
       const a = night * (0.5 + 0.5 * Math.sin(frame * 0.05 + s.tw)) * (1 - rain * 0.8);
       ctx.fillStyle = `rgba(255,255,255,${a})`;
       ctx.fillRect(s.x, s.y, s.r, s.r);
     }
   }
+  drawCityLights(fgBoxes, groundTop);               // Manila's windows glow at night
+
   if (rain > 0.01) {
     ctx.fillStyle = `rgba(40,50,70,${0.3 * rain})`;
     ctx.fillRect(0, 0, W, H);
@@ -3582,15 +5528,66 @@ function drawOverlays() {
   if (shield) active.push(["shield", 1]);
   if (magnetT > 0) active.push(["magnet", magnetT / magnetMax]);
   if (slowT > 0) active.push(["slowmo", slowT / slowMax]);
-  if (clearT > 0) active.push(["walis", clearT / WALIS_TIME]);
+  if (clearT > 0) active.push(["enforcer", clearT / ENFORCER_TIME]);
+  // Colored glow around the screen edges right after you grab a power-up
+  if (edgeT > 0) {
+    const rgb = rgbOf(POWERS[edgeKind].color), a = (edgeT / 40) * 0.45;
+    const eg = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.62);
+    eg.addColorStop(0, `rgba(${rgb},0)`);
+    eg.addColorStop(1, `rgba(${rgb},${a})`);
+    ctx.fillStyle = eg;
+    ctx.fillRect(0, 0, W, H);
+  }
+  // ENFORCER: a traffic enforcer slides in, blows the whistle and waves the traffic away
+  if (enforcerT > 0) {
+    const t = 1 - enforcerT / ENFORCER_SHOW;               // 0 → 1
+    const slide = t < 0.15 ? 1 - t / 0.15 : t > 0.85 ? (t - 0.85) / 0.15 : 0;
+    const ex = 130 - slide * 300, ey = H + 6;
+    const wave = Math.sin(t * Math.PI * 6);                 // the arm waves back and forth
+    drawEnforcer(ex, ey, 300, wave);
+    if (slide < 0.5) {
+      // speech bubble: "PRRRT! TABI!"
+      const bx = ex + 70, by = ey - 330;
+      ctx.fillStyle = "#ffffff";
+      roundRect(bx, by, 190, 58, 22);
+      ctx.fill();
+      ctx.strokeStyle = "#1e293b";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      poly("#ffffff", [bx + 20, by + 54, bx + 50, by + 54, bx + 6, by + 80]);
+      ctx.fillStyle = "#1e293b";
+      ctx.font = "900 26px 'Trebuchet MS', sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("PRRRT! TABI!", bx + 95, by + 30);
+      ctx.strokeStyle = "rgba(255,255,255,0.85)";          // whistle sound lines
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 3; i++) {
+        const r = 14 + ((frame * 2 + i * 10) % 30);
+        ctx.beginPath();
+        ctx.arc(ex + 48, ey - 236, r, -0.7, 0.4);
+        ctx.stroke();
+      }
+    }
+  }
+
   for (const [kind, left] of active) {
-    ctx.fillStyle = "rgba(15,23,42,0.75)";
+    const ending = kind !== "shield" && left < 0.25;    // almost over: the card blinks
+    ctx.fillStyle = ending && Math.floor(frame / 6) % 2 ? "rgba(127,29,29,0.85)" : "rgba(15,23,42,0.75)";
     roundRect(18, y, 190, 46, 12);
     ctx.fill();
+    ctx.strokeStyle = POWERS[kind].color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
     ctx.fillStyle = POWERS[kind].color;
     ctx.beginPath();
     ctx.arc(42, y + 23, 16, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = "#ffffff";                  // ring that empties as time runs out
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(42, y + 23, 19, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left);
+    ctx.stroke();
     drawPowerIcon(kind, 42, y + 23, 16);
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 16px 'Trebuchet MS', sans-serif";
@@ -3648,6 +5645,23 @@ function drawOverlays() {
     ctx.fillText(text, W / 2, 86);
   }
 
+  // TAG-INIT badge while the heat is on
+  if (heat > 0.5 && (mode === "playing" || mode === "countdown")) {
+    const showingCrossing = crossing && relZ(crossing.z, playerZ()) > 0;
+    const temp = 38 + Math.round(Math.sin(frame * 0.01) + 1);
+    const text = `🔥 TAG-INIT CHALLENGE · ${temp}°C · survive Calamba for +₱100`;
+    ctx.font = "900 17px 'Trebuchet MS', sans-serif";
+    const tw = ctx.measureText(text).width + 30;
+    const by = showingCrossing ? 112 : 66;
+    ctx.fillStyle = "rgba(194,65,12,0.9)";
+    roundRect(W / 2 - tw / 2, by, tw, 34, 10);
+    ctx.fill();
+    ctx.fillStyle = "#fff7ed";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, W / 2, by + 18);
+  }
+
   // When you reach a new place: just its name, big, in the middle of the sky
   if (bannerT > 0) {
     const shown = 210 - bannerT;
@@ -3658,6 +5672,7 @@ function drawOverlays() {
     ctx.translate(W / 2, 120);
     ctx.scale(pop, pop);
     outlinedText(currentLocation().name.toUpperCase(), 0, 0, 72, "#facc15", "#1e293b", 10);
+    if (currentLocation().name === "Calamba") outlinedText("🔥 TAG-INIT CHALLENGE!", 0, 62, 32, "#fb923c", "#1e293b", 6);
     ctx.restore();
     ctx.globalAlpha = 1;
   }
@@ -3731,6 +5746,8 @@ function drawOverlays() {
     ctx.restore();
   }
 
+  drawConfetti();
+
   if (paused) {
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     ctx.fillRect(0, 0, W, H);
@@ -3750,10 +5767,20 @@ function draw() {
     ctx.scale(1 + crashZoom, 1 + crashZoom);
     ctx.translate(-p.x, -cy);
   }
+  // Camera lean: rotate the whole scene a tiny bit (and zoom a little so no corner shows)
+  if (Math.abs(lean) > 0.001) {
+    const zoom = 1 + Math.abs(lean) * 1.6;
+    ctx.translate(W / 2, H * 0.8);
+    ctx.rotate(lean);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-W / 2, -H * 0.8);
+  }
   const lights = drawWorld();
+  drawParticles();           // dust, spray and sparks
   drawAtmosphere(lights);
   drawSpeedLines();
   ctx.restore();
+  applyHeat();               // Calamba's TAG-INIT heat haze (does nothing elsewhere)
   drawOverlays();
 }
 
@@ -3775,7 +5802,366 @@ function loop(now) {
   const engineOn = (mode === "playing" && !paused) || mode === "countdown";
   Sound.updateEngine(speed, engineOn, slowT > 0);
   Sound.updateRain(atmo.rain, mode !== "home" && !paused);
+  Music.update();
+  updateGarage(now);         // the car turning on the garage turntable
+  updateHowto(now);          // the little moving pictures on How to Play
   requestAnimationFrame(loop);
+}
+
+// ===== HOW TO PLAY: little moving pictures =====
+// Each card on the How to Play screen has a small canvas with a looping demo.
+// To reuse the game's drawings (cars, coins, power-ups), we point "ctx" at the
+// card's canvas for a moment, then point it back at the game.
+const DEMO_W = 200, DEMO_H = 120, DEMO_HY = 38;           // card size and horizon line
+const OFF = W / 2 - DEMO_W / 2;      // the road painters think the screen is 960 wide: shift by this
+const DEMO_LANES = [-0.75, -0.25, 0.25, 0.75];
+const heatCopy = document.createElement("canvas");      // for the TAG-INIT wiggle demo
+heatCopy.width = DEMO_W;
+heatCopy.height = DEMO_H;
+// A point on the little road. lane: -1..1 across, t: 0 = horizon, 1 = bottom of the card
+function dp(lane, t) {
+  const half = 14 + 100 * t;
+  return { x: DEMO_W / 2 + lane * half, y: DEMO_HY + (DEMO_H - DEMO_HY) * t, w: half * 0.5 };
+}
+function demoRoad(c, time, opts = {}) {
+  const sky = c.createLinearGradient(0, 0, 0, DEMO_HY);
+  sky.addColorStop(0, opts.night ? "#0f172a" : "#7dd3fc");
+  sky.addColorStop(1, opts.night ? "#312e81" : "#e0f2fe");
+  c.fillStyle = sky;
+  c.fillRect(0, 0, DEMO_W, DEMO_HY);
+  c.fillStyle = opts.grass || "#4ade80";
+  c.fillRect(0, DEMO_HY, DEMO_W, DEMO_H - DEMO_HY);
+  const a = dp(-1.1, 0), b = dp(1.1, 0), d = dp(1.1, 1), e = dp(-1.1, 1);
+  c.fillStyle = "#475569";
+  c.beginPath();
+  c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.lineTo(d.x, d.y); c.lineTo(e.x, e.y);
+  c.fill();
+  c.fillStyle = "#e2e8f0";                                // dashed lane lines that scroll
+  for (const lane of [-0.5, 0, 0.5]) {
+    for (let k = 0; k < 6; k++) {
+      const t0 = ((k / 6 + time * (opts.slow ? 0.25 : 0.9)) % 1);
+      const t1 = Math.min(1, t0 + 0.06);
+      const p0 = dp(lane, t0 * t0), p1 = dp(lane, t1 * t1);
+      c.fillRect(p0.x - 0.6 - t0, p0.y, 1.2 + t0 * 2, Math.max(1, p1.y - p0.y));
+    }
+  }
+}
+function demoText(c, text, x, y, size, color) {
+  c.font = `900 ${size}px 'Trebuchet MS', sans-serif`;
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.lineWidth = size / 4;
+  c.lineJoin = "round";                 // smooth outline corners (no spikes)
+  c.strokeStyle = "#1e293b";
+  c.strokeText(text, x, y);
+  c.fillStyle = color;
+  c.fillText(text, x, y);
+}
+function keyChip(c, label, x, y, on) {
+  c.fillStyle = on ? "#facc15" : "rgba(15,23,42,0.75)";
+  roundRect(x - 12, y - 10, 24, 20, 5);
+  c.fill();
+  c.strokeStyle = "#ffffff";
+  c.lineWidth = 1.5;
+  c.stroke();
+  c.fillStyle = on ? "#1e293b" : "#ffffff";
+  c.font = "900 12px 'Trebuchet MS', sans-serif";
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.fillText(label, x, y + 1);
+}
+// Runs a road painter with the canvas shifted, so x + OFF lands back on the card
+function shifted(cb) {
+  ctx.save();
+  ctx.translate(-OFF, 0);
+  cb();
+  ctx.restore();
+}
+const smooth = (t) => t * t * (3 - 2 * t);       // 0..1 with a soft start and stop
+const loopT = (time, len) => (time % len) / len;           // 0..1 again and again
+// The player's car on the little road (lane can be in between, e.g. 1.5)
+function demoPlayer(lane, t = 0.86, kind) {
+  const i = Math.floor(lane), f = lane - i;
+  const lx = DEMO_LANES[i] + (DEMO_LANES[Math.min(3, i + 1)] - DEMO_LANES[i]) * f;
+  const p = dp(lx, t);
+  const pt = PLAYER_TYPES.find((x) => x.id === kind) || PLAYER_TYPES[0];
+  shifted(() => drawPlayerVehicle(pt, p.x + OFF, p.y, p.w));
+  return p;
+}
+function demoCar(type, lane, t) {
+  const p = dp(DEMO_LANES[lane], t);
+  const look = type === "jeepney" ? JEEP_COLORS[1] : PLAYER_COLORS[1];
+  shifted(() => drawVehicle({ type, look }, p.x + OFF, p.y, p.w / 580));   // same size as the game: a car = the lane's car width
+  return p;
+}
+
+const DEMOS = {
+  // ← → : the car slides between lanes
+  steer(c, time) {
+    demoRoad(c, time);
+    const k = loopT(time, 2.4);
+    const goingRight = k < 0.5;
+    const move = smooth(Math.min(1, (k % 0.5) / 0.25));
+    const lane = goingRight ? 1 + move : 2 - move;
+    demoPlayer(lane);
+    keyChip(c, "◀", 24, DEMO_H - 16, !goingRight && move < 1);
+    keyChip(c, "▶", DEMO_W - 24, DEMO_H - 16, goingRight && move < 1);
+    if (move < 1) demoText(c, goingRight ? "→" : "←", DEMO_W / 2, 20, 18, "#ffffff");
+  },
+  // pass vehicles (+10) and grab coins (+₱)
+  pass(c, time) {
+    demoRoad(c, time);
+    const k = loopT(time, 2.6);
+    const ct = 0.3 + k * 0.75;
+    if (ct < 0.82) { const p = dp(DEMO_LANES[1], ct); drawCoin(p.x, p.y, p.w * 1.6); }
+    const jt = 0.25 + k * 1.0;
+    if (jt < 1.25) demoCar("jeepney", 2, jt);
+    demoPlayer(1);
+    if (k > 0.62) demoText(c, "+10", DEMO_W * 0.72, 46 - (k - 0.62) * 30, 16, "#ffffff");
+    if (k > 0.7) demoText(c, "AYOS! +₱5", DEMO_W * 0.3, 40 - (k - 0.7) * 30, 14, "#ffd23f");
+  },
+  // close call: dodge at the very last second
+  close(c, time) {
+    demoRoad(c, time);
+    const k = loopT(time, 2.6);
+    const tt = 0.25 + k * 0.95;
+    const dodge = smooth(Math.max(0, Math.min(1, (k - 0.48) / 0.08)));
+    if (tt < 1.2) demoCar("boxtruck", 1, tt);
+    const p = demoPlayer(1 + dodge);
+    if (k > 0.55 && k < 0.75) {                         // sparks between them
+      c.strokeStyle = "#facc15";
+      c.lineWidth = 2;
+      for (let i = 0; i < 6; i++) {
+        const a = i * 1.1 + time * 9;
+        c.beginPath();
+        c.moveTo(p.x - p.w * 0.6, p.y - 12);
+        c.lineTo(p.x - p.w * 0.6 - Math.cos(a) * 12, p.y - 12 - Math.abs(Math.sin(a)) * 12);
+        c.stroke();
+      }
+    }
+    if (k > 0.55) demoText(c, "GALING!", DEMO_W / 2, 22, 18, "#facc15");
+  },
+  // power-up cards: the pickup on the road, then what it does
+  shield(c, time) {
+    demoRoad(c, time);
+    const k = loopT(time, 3);
+    const hit = k > 0.55;
+    const tt = 0.3 + k * 1.0;
+    if (!hit) demoCar("car", 1, tt);
+    else if (k < 0.8) {                                  // knocked away
+      const p = dp(DEMO_LANES[1], 0.85);
+      c.save();
+      c.translate(0, -(k - 0.55) * 160);
+      c.globalAlpha = 1 - (k - 0.55) * 4;
+      shifted(() => drawVehicle({ type: "car", look: PLAYER_COLORS[1] }, p.x + OFF, p.y, p.w / 580));
+      c.restore();
+    }
+    const p = demoPlayer(1);
+    if (!hit || Math.floor(time * 10) % 2) {
+      c.fillStyle = "rgba(56,189,248,0.25)";
+      c.strokeStyle = "rgba(125,211,252,0.95)";
+      c.lineWidth = 2.5;
+      c.beginPath();
+      c.ellipse(p.x, p.y - p.w * 0.35, p.w * 0.75, p.w * 0.6, 0, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+    }
+    if (hit) demoText(c, "LIGTAS!", DEMO_W / 2, 22, 18, "#38bdf8");
+  },
+  magnet(c, time) {
+    demoRoad(c, time);
+    const k = loopT(time, 2.2);
+    for (const [lane, off] of [[0, 0], [2, 0.3], [3, 0.6]]) {   // coins slide into your lane
+      const kk = (k + off) % 1;
+      const t = 0.3 + kk * 0.55;
+      const pull = smooth(Math.min(1, kk * 1.4));
+      const from = DEMO_LANES[lane], to = DEMO_LANES[1];
+      const p = dp(from + (to - from) * pull, t);
+      if (kk < 0.95) drawCoin(p.x, p.y, p.w * 1.6);
+    }
+    const p = demoPlayer(1);
+    for (let i = 0; i < 3; i++) {
+      const t = (time * 1.2 + i / 3) % 1;
+      c.strokeStyle = `rgba(239,68,68,${0.8 * (1 - t)})`;
+      c.lineWidth = 2;
+      const ww = p.w * (0.9 - t * 0.5);
+      c.beginPath();
+      c.ellipse(p.x, p.y - p.w * 0.2 - t * p.w * 1.5, ww, ww * 0.18, 0, Math.PI, Math.PI * 2);
+      c.stroke();
+    }
+  },
+  slowmo(c, time) {
+    demoRoad(c, time, { slow: true });
+    const k = loopT(time, 6);
+    demoCar("jeepney", 2, 0.3 + k * 0.7);
+    demoCar("ebike", 0, 0.45 + ((k + 0.5) % 1) * 0.6);
+    demoPlayer(1);
+    c.fillStyle = "rgba(168,85,247,0.2)";
+    c.fillRect(0, 0, DEMO_W, DEMO_H);
+    c.fillStyle = "#a855f7";
+    c.beginPath();
+    c.arc(DEMO_W - 22, 20, 14, 0, Math.PI * 2);
+    c.fill();
+    drawPowerIcon("slowmo", DEMO_W - 22, 20, 14);
+  },
+  enforcer(c, time) {
+    demoRoad(c, time);
+    const k = loopT(time, 3);
+    const out = Math.max(0, Math.min(1, (k - 0.3) / 0.25));   // vehicles slide off the road
+    const list = [["jeepney", 0, 0.45, -1], ["boxtruck", 2, 0.35, 1], ["car", 3, 0.6, 1], ["bus", 1, 0.3, -1]];
+    if (k < 0.9) {
+      for (const [type, lane, t, dir] of list) {
+        if (out >= 1) continue;
+        c.save();
+        c.globalAlpha = 1 - out * 0.6;
+        c.translate(dir * out * out * 90, 0);
+        demoCar(type, lane, t);
+        c.restore();
+      }
+    } else for (const [type, lane, t] of list) demoCar(type, lane, t);   // traffic comes back
+    demoPlayer(1, 0.88);
+    if (k > 0.15 && k < 0.85) {                          // the enforcer on the right side, waving
+      const slide = k < 0.25 ? (0.25 - k) / 0.1 : 0;
+      drawEnforcer(DEMO_W - 30 + slide * 60, DEMO_H - 4, 78, Math.sin(time * 12));
+      if (k > 0.25) demoText(c, "PRRRT! TABI!", DEMO_W / 2 - 14, 18, 15, "#a3e635");
+    }
+  },
+  // the trip: Calauan → ... → Manila
+  places(c, time) {
+    const names = LOCATIONS.map((l) => l.name);
+    const icons = ["🍍", "🥖", "🌧️", "🔥", "🌙", "🌋", "🏙️", "⭐", "🌲", "🌬️"];
+    const skies = ["#7dd3fc", "#7dd3fc", "#94a3b8", "#fdba74", "#1e1b4b", "#fb7185", "#0f172a", "#86efac", "#cbd5e1", "#fb923c"];
+    const N = names.length;
+    const pos = (time * 0.45) % N;
+    const i = Math.floor(pos);
+    c.fillStyle = skies[i];
+    c.fillRect(0, 0, DEMO_W, DEMO_H);
+    c.fillStyle = "rgba(15,23,42,0.35)";
+    c.fillRect(0, 70, DEMO_W, 50);
+    const x0 = 16, x1 = DEMO_W - 16, y = 92;
+    c.strokeStyle = "#e2e8f0";
+    c.lineWidth = 3;
+    c.beginPath(); c.moveTo(x0, y); c.lineTo(x1, y); c.stroke();
+    for (let n = 0; n < N; n++) {
+      const x = x0 + (n / (N - 1)) * (x1 - x0);
+      c.fillStyle = n <= i ? "#facc15" : "#64748b";
+      c.beginPath(); c.arc(x, y, n === i ? 6 : 4, 0, Math.PI * 2); c.fill();
+    }
+    const carX = x0 + (Math.min(pos, N - 1) / (N - 1)) * (x1 - x0);
+    c.fillStyle = "#e8264f";                             // a tiny car on the line
+    roundRect(carX - 8, y - 15, 16, 8, 3); c.fill();
+    c.fillStyle = "#111";
+    c.fillRect(carX - 6, y - 8, 4, 3); c.fillRect(carX + 2, y - 8, 4, 3);
+    c.font = "30px sans-serif";
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.fillText(icons[i], DEMO_W / 2, 26);
+    demoText(c, names[i].toUpperCase(), DEMO_W / 2, 58, 16, "#facc15");
+    c.fillStyle = "#ffffff";
+    c.font = "bold 9px 'Trebuchet MS', sans-serif";
+    c.fillText("2.5 km each", DEMO_W / 2, 112);
+  },
+  // dangers that show up later
+  hazards(c, time) {
+    const k = loopT(time, 10);
+    const which = Math.floor(k * 4), kk = (k * 4) % 1;
+    demoRoad(c, time, { grass: which === 3 ? "#ca8a04" : undefined });
+    if (which === 0) {                                    // PARA!: a jeepney stops suddenly
+      const t = Math.min(0.62, 0.3 + kk * 0.9);
+      const p = demoCar("jeepney", 1, t);
+      if (t >= 0.62) {
+        c.fillStyle = "rgba(255,40,40,0.8)";
+        for (const s of [-1, 1]) { c.beginPath(); c.arc(p.x + s * p.w * 0.44, p.y - p.w * 0.54, 3, 0, Math.PI * 2); c.fill(); }
+      }
+      demoPlayer(1 + smooth(Math.max(0, Math.min(1, (kk - 0.6) / 0.15))));
+      demoText(c, "PARA!", DEMO_W / 2, 18, 18, "#ef4444");
+    } else if (which === 1) {                             // BAHA: a flooded part of the road
+      const t = 0.3 + kk * 0.6;
+      const p = dp(DEMO_LANES[1] + 0.12, t);
+      c.fillStyle = "rgba(96,165,250,0.85)";
+      c.beginPath();
+      c.ellipse(p.x, p.y, p.w * 1.4 + Math.sin(time * 6) * 1.5, p.w * 0.35, 0, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = "rgba(255,255,255,0.5)";
+      c.beginPath();
+      c.ellipse(p.x - p.w * 0.3, p.y - p.w * 0.06, p.w * 0.5, p.w * 0.08, 0, 0, Math.PI * 2);
+      c.fill();
+      demoPlayer(2);
+      demoText(c, "BAHA! (slows you)", DEMO_W / 2, 18, 15, "#60a5fa");
+    } else if (which === 2) {                             // TAWIRAN: people crossing
+      const t = 0.42 + kk * 0.25;
+      const z = dp(0, t);
+      c.fillStyle = "#f8fafc";
+      for (let s = -5; s <= 5; s++) {
+        const a = dp(s / 5.5, t);
+        c.fillRect(a.x - z.w * 0.18, a.y - 2, z.w * 0.3, 5);
+      }
+      for (const [start, dir, shirt] of [[-0.9, 1, "#f472b6"], [0.7, -1, "#38bdf8"]]) {
+        const lx = start + dir * ((time * 0.35) % 1.6);
+        const p = dp(lx, t);
+        const sw = Math.sin(time * 10) * 2;
+        c.fillStyle = "#1e293b";
+        c.fillRect(p.x - 2 + sw, p.y - 7, 2, 7); c.fillRect(p.x + 1 - sw, p.y - 7, 2, 7);
+        c.fillStyle = shirt;
+        c.fillRect(p.x - 3, p.y - 15, 7, 9);
+        c.fillStyle = "#8d5a3b";
+        c.beginPath(); c.arc(p.x + 0.5, p.y - 18, 3, 0, Math.PI * 2); c.fill();
+      }
+      demoPlayer(3);
+      demoText(c, "TAWIRAN! Iwasan!", DEMO_W / 2, 18, 15, "#facc15");
+    } else {                                              // TAG-INIT: heat makes the road wiggle
+      demoCar("bus", 2, 0.5);
+      demoPlayer(1);
+      heatCopy.getContext("2d").clearRect(0, 0, DEMO_W, DEMO_H);
+      heatCopy.getContext("2d").drawImage(c.canvas, 0, 0);   // copy the picture first
+      for (let y = 0; y < DEMO_H; y += 3) {                 // then redraw it in thin wavy strips
+        const sh = Math.sin(y * 0.25 + time * 8) * 2.5;
+        c.drawImage(heatCopy, 0, y, DEMO_W, 3, sh, y, DEMO_W, 3);
+      }
+      c.fillStyle = "rgba(251,146,60,0.25)";
+      c.fillRect(0, 0, DEMO_W, DEMO_H);
+      c.fillStyle = "#fde047";
+      c.beginPath(); c.arc(DEMO_W - 22, 16, 9, 0, Math.PI * 2); c.fill();
+      demoText(c, "🔥 TAG-INIT!", DEMO_W / 2, 18, 15, "#fb923c");
+    }
+  },
+  // the secret vehicle
+  hari(c, time) {
+    const bg = c.createRadialGradient(DEMO_W / 2, 70, 5, DEMO_W / 2, 70, 110);
+    bg.addColorStop(0, "#713f12");
+    bg.addColorStop(1, "#0f0a05");
+    c.fillStyle = bg;
+    c.fillRect(0, 0, DEMO_W, DEMO_H);
+    for (let i = 0; i < 10; i++) {                       // sparkles
+      const a = i * 2.4 + time;
+      const x = DEMO_W / 2 + Math.cos(a) * (40 + i * 5), y = 60 + Math.sin(a * 1.3) * 35;
+      c.fillStyle = `rgba(250,204,21,${0.4 + 0.4 * Math.sin(time * 4 + i)})`;
+      c.fillRect(x, y, 2, 2);
+    }
+    shifted(() => drawHari(DEMO_W / 2 + OFF, 114, 52 + Math.sin(time * 2) * 2));
+    demoText(c, "👑 HARI NG DAAN", DEMO_W / 2, 14, 13, "#facc15");
+  },
+};
+
+const demoCanvases = [...document.querySelectorAll("canvas[data-demo]")];
+let demoStart = 0;
+function updateHowto(now) {
+  if (document.getElementById("howto").classList.contains("hidden")) return;
+  if (!demoStart) demoStart = now;
+  const time = (now - demoStart) / 1000;
+  const keepCtx = ctx;
+  for (const cv of demoCanvases) {
+    const fn = DEMOS[cv.dataset.demo];
+    if (!fn) continue;
+    ctx = cv.getContext("2d");
+    ctx.save();
+    ctx.clearRect(0, 0, DEMO_W, DEMO_H);
+    try { fn(ctx, time); } finally {
+      ctx.restore();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+  }
+  ctx = keepCtx;
 }
 
 // ----- 17. Switching screens -----
@@ -3814,6 +6200,7 @@ function gameOver() {
     saveBest(best);
     bestEl.textContent = best;
     overTitle.textContent = "BAGONG RECORD!";
+    burstConfetti();
   } else {
     overTitle.textContent = Math.random() < 0.5 ? "SAYANG!" : "HALA!";
   }
@@ -3825,6 +6212,43 @@ function gameOver() {
   overBestEl.textContent = best;
   showScreen(overScreen);
 }
+
+// ----- 17b. SCREEN WIPE and INTRO -----
+// Jeepney-stripe wipe: stripes slide in and cover the screen, the screen
+// changes behind them, then they slide away.
+const wipe = document.getElementById("wipe");
+function transition(change) {
+  if (wipe.classList.contains("active")) {       // already wiping: just change
+    change();
+    return;
+  }
+  wipe.classList.remove("out");
+  wipe.classList.add("active", "in");
+  setTimeout(() => {
+    change();                                    // switch screens while covered
+    wipe.classList.remove("in");
+    wipe.classList.add("out");
+    setTimeout(() => wipe.classList.remove("active", "out"), 400);
+  }, 330);
+}
+
+// Intro: the logo, then the first tap/key plays a jeepney horn and opens the game.
+// (Browsers only allow sound after the player taps or presses a key.)
+const intro = document.getElementById("intro");
+function closeIntro(e) {
+  if (!intro || !intro.isConnected || intro.classList.contains("go")) return;   // already gone
+  if (e) {
+    e.preventDefault();
+    e.stopImmediatePropagation();                // this key press shouldn't also start a game
+  }
+  Sound.init();
+  Sound.introHorn();
+  intro.classList.add("go");                     // logo zooms away, stripes wipe
+  window.removeEventListener("keydown", closeIntro, true);
+  setTimeout(() => intro.remove(), 900);
+}
+window.addEventListener("keydown", closeIntro, true);
+intro.addEventListener("pointerdown", closeIntro);
 
 // Start on the home screen
 showGarage();

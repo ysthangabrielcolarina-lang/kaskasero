@@ -37,7 +37,8 @@ Works on computers and phones. No download needed.
   - 🧲 **Magnet:** pulls coins to you.
   - ⏱ **Slow-mo:** traffic moves at half speed.
   - 🧹 **Walis:** clears every vehicle off the road for 2 seconds.
-- **Garage:** choose a Sports Car, Electric Car, Retro Muscle or Jeepney.
+- **Garage:** choose a Sports Car, Electric Car, Retro Muscle or Jeepney. Your pick spins 360° on a turntable in the Kaskasero Garage (drag it to turn it yourself).
+- **Picture guide:** the How to Play screen shows a small moving demo for every rule, power-up and danger.
 - **Secret vehicle:** unlock 👑 **Hari ng Daan**, a maxed-out e-bike, by reaching Tagaytay or buying it for ₱500.
 - **Sounds:** engine, horns, coins, rain and crashes, all made in code with the Web Audio API (no sound files).
 
