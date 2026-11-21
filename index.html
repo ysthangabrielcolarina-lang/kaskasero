@@ -11,6 +11,8 @@
   <!-- Intro: the logo first. Tapping / pressing a key plays the horn and opens the game -->
   <div id="intro" class="intro">
     <div class="intro-road"></div>
+    <!-- vehicles driving on the intro road (drawn by script.js) -->
+    <canvas id="intro-cars" class="intro-cars"></canvas>
     <div class="intro-box">
       <div class="intro-stars">★ ☀ ★</div>
       <h1 class="logo intro-logo">KASKASERO<span>!</span></h1>
@@ -64,30 +66,36 @@
               <canvas id="car-preview" width="400" height="220"></canvas>
               <div class="car-info">
                 <div id="car-name" class="car-name">Sports Car</div>
-                <div class="stat"><span>Speed</span><b class="bar"><i id="stat-speed"></i></b></div>
-                <div class="stat"><span>Slim</span><b class="bar"><i id="stat-slim"></i></b></div>
+                <!-- Speed and Slim: a 10-block meter, the real value, the level, and an upgrade button -->
+                <div class="stat">
+                  <span class="stat-name">Speed <small id="lvl-speed">Lv 0/5</small></span>
+                  <b id="stat-speed" class="meter"></b>
+                  <span id="val-speed" class="stat-val">240 km/h</span>
+                  <button id="up-speed" class="up-btn">⬆ ₱100</button>
+                </div>
+                <div class="stat">
+                  <span class="stat-name">Slim <small id="lvl-slim">Lv 0/5</small></span>
+                  <b id="stat-slim" class="meter"></b>
+                  <span id="val-slim" class="stat-val">3/10</span>
+                  <button id="up-slim" class="up-btn">⬆ ₱100</button>
+                </div>
                 <div id="car-special" class="car-special">Fastest car. Built for speed.</div>
                 <!-- only shown for Hari ng Daan while it's still locked -->
                 <div id="lock-box" class="lock-box hidden">
                   🔒 Unlock with your Pera:
-                  <button id="buy-btn" class="btn buy">Bilhin ₱650</button>
+                  <button id="buy-btn" class="btn buy">Bilhin ₱2000</button>
                 </div>
               </div>
             </div>
             <button id="next-car" class="arrow" aria-label="Next vehicle">▶</button>
           </div>
 
+          <!-- Paint colors: made by script.js. Locked ones show a 🔒 and their price -->
           <div id="color-row" class="picker">
             <span>Kulay:</span>
-            <div id="swatches" class="swatches">
-              <!-- one button per color; data-car = which color -->
-              <button class="swatch" data-car="0" style="--c:#e8264f" aria-label="Red"></button>
-              <button class="swatch" data-car="1" style="--c:#1f8a9c" aria-label="Teal"></button>
-              <button class="swatch" data-car="2" style="--c:#f5f5f5" aria-label="White"></button>
-              <button class="swatch" data-car="3" style="--c:#2b2b2b" aria-label="Black"></button>
-              <button class="swatch" data-car="4" style="--c:#facc15" aria-label="Yellow"></button>
-              <button class="swatch" data-car="5" style="--c:#2563eb" aria-label="Blue"></button>
-            </div>
+            <div id="swatches" class="swatches"></div>
+            <span id="color-name" class="color-name">Candy Red</span>
+            <button id="color-buy" class="btn buy small hidden">Bilhin ₱40</button>
           </div>
 
           <div class="best-badge">🏆 Best: <strong id="home-best">0</strong> &nbsp;·&nbsp; 💰 Pera: <strong>₱<span id="wallet">0</span></strong></div>
@@ -101,6 +109,16 @@
             <button id="sfx-toggle" class="toggle" aria-pressed="true">🔊 Sounds: ON</button>
             <button id="music-toggle" class="toggle" aria-pressed="true">🎵 Music: ON</button>
           </div>
+        </div>
+      </div>
+
+      <!-- ===== CHOOSE YOUR MAP ===== -->
+      <!-- The 3 map cards (with each route) are made by script.js -->
+      <div id="maps" class="screen hidden">
+        <div class="jeep-panel maps-panel">
+          <h2>Saan tayo? <small>Choose your map</small></h2>
+          <div id="map-grid" class="map-grid"></div>
+          <button id="maps-back" class="btn ghost">Bumalik</button>
         </div>
       </div>
 
@@ -148,7 +166,7 @@
             <div class="how-card">
               <canvas data-demo="places" width="200" height="120"></canvas>
               <b>Biyahe</b>
-              <span>Every 2.5 km you reach a new place, from Calauan to Ilocos</span>
+              <span>3 maps: Luzon, Visayas and Mindanao. A new place every 2.5 km</span>
             </div>
             <div class="how-card">
               <canvas data-demo="hazards" width="200" height="120"></canvas>
@@ -158,7 +176,7 @@
             <div class="how-card">
               <canvas data-demo="hari" width="200" height="120"></canvas>
               <b>Hari ng Daan</b>
-              <span>Unlock it for ₱650 Pera (collect ₱ coins!)</span>
+              <span>Unlock it for ₱2000 Pera (collect ₱ coins!)</span>
             </div>
           </div>
           <p class="how-keys"><b>P</b> pause · <b>M</b> sound effects · <b>B</b> music · <b>⛶</b> full screen</p>

@@ -12,7 +12,8 @@
 
 // ----- 1. Canvas setup -----
 const canvas = document.getElementById("game");
-let ctx = canvas.getContext("2d");      // "let": the garage borrows it for a moment to draw car faces
+const gameCtx = canvas.getContext("2d");   // the real game screen (never changes)
+let ctx = gameCtx;      // "let": the garage borrows it for a moment to draw car faces
 const W = canvas.width;              // 960
 const H = canvas.height;             // 540
 const HORIZON = Math.round(H * 0.34); // y where the sky meets the ground
@@ -25,6 +26,7 @@ const hud = document.getElementById("hud");
 const touch = document.getElementById("touch");
 const homeScreen = document.getElementById("home");
 const howtoScreen = document.getElementById("howto");
+const mapsScreen = document.getElementById("maps");
 const overScreen = document.getElementById("gameover");
 const homeBestEl = document.getElementById("home-best");
 const overTitle = document.getElementById("over-title");
@@ -108,7 +110,7 @@ const pickOne = (list) => list[Math.floor(Math.random() * list.length)];
 
 // Kalesas only show up in Calauan, Manila and Ilocos (Vigan is famous for them)
 function typeWeight(t) {
-  if (t === "kalesa" && !["Calauan", "Manila", "Ilocos"].includes(currentLocation().name)) return 0;
+  if (t === "kalesa" && !currentLocation().kalesa) return 0;
   return VEHICLES[t].weight;
 }
 
@@ -125,21 +127,147 @@ function randomType() {
 
 // Picks colors that fit the vehicle type
 function randomLook(type) {
-  if (type === "car") return pickOne(CAR_COLORS);
+  if (type === "car") return Math.random() < 0.5 ? { ...pickOne(CAR_COLORS), ...pickOne(TRAFFIC_DESIGNS) } : pickOne(CAR_COLORS);
   if (type === "tricycle") return pickOne(TRIKE_COLORS);
   if (type === "jeepney") return pickOne(JEEP_COLORS);
   if (type === "ebike") return pickOne(EBIKE_COLORS);
   return null;   // the others always use the same colors
 }
 
+// Paint colors for your car. Candy Red is free; the others are bought with Pera (cheap!).
+// body = main color, dark = shadow side, top = shiny top, price in ₱
 const PLAYER_COLORS = [
-  { body: "#e8264f", dark: "#a8163a", top: "#ff5577" },  // red
-  { body: "#1f8a9c", dark: "#16697a", top: "#3fb3c6" },  // teal
-  { body: "#f5f5f5", dark: "#c9c9c9", top: "#ffffff" },  // white
-  { body: "#2b2b2b", dark: "#151515", top: "#4a4a4a" },  // black
-  { body: "#facc15", dark: "#b8920b", top: "#fde68a" },  // yellow
-  { body: "#2563eb", dark: "#1a46a8", top: "#60a5fa" },  // blue
+  { name: "Candy Red",      body: "#e8264f", dark: "#a8163a", top: "#ff5577", accent: "#ffffff", accent2: "#1f2937", design: "stripes", price: 0 },
+  { name: "Ocean Teal",     body: "#0ea5a4", dark: "#0f766e", top: "#5eead4", accent: "#facc15", accent2: "#0f172a", design: "racing", price: 40 },
+  { name: "Pearl White",    body: "#f1f5f9", dark: "#cbd5e1", top: "#ffffff", accent: "#2563eb", accent2: "#dc2626", design: "stripes", price: 40 },
+  { name: "Midnight Black", body: "#1f2937", dark: "#0b1220", top: "#52627a", accent: "#f97316", accent2: "#facc15", design: "flames", price: 60 },
+  { name: "Mango Yellow",   body: "#facc15", dark: "#b8920b", top: "#fef08a", accent: "#111827", accent2: "#ffffff", design: "checker", price: 60 },
+  { name: "Royal Blue",     body: "#2563eb", dark: "#1a46a8", top: "#7aa7ff", accent: "#ffffff", accent2: "#facc15", design: "bolt", price: 80 },
+  { name: "Sunset Orange",  body: "#f97316", dark: "#c2410c", top: "#fdba74", accent: "#1f2937", accent2: "#fde68a", design: "twotone", price: 80 },
+  { name: "Calamansi Lime", body: "#84cc16", dark: "#4d7c0f", top: "#d9f99d", accent: "#111827", accent2: "#ffffff", design: "racing", price: 100 },
+  { name: "Ube Purple",     body: "#7c3aed", dark: "#4c1d95", top: "#c4b5fd", accent: "#f472b6", accent2: "#fde68a", design: "flames", price: 120 },
+  { name: "Gumamela Pink",  body: "#ec4899", dark: "#9d174d", top: "#f9a8d4", accent: "#ffffff", accent2: "#7c3aed", design: "twotone", price: 150 },
+  { name: "Watawat",        body: "#1d4ed8", dark: "#1e3a8a", top: "#60a5fa", accent: "#dc2626", accent2: "#facc15", design: "flag", price: 150 },
 ];
+// What each design is called (shown in the garage)
+const DESIGN_NAMES = { stripes: "twin stripes", racing: "racing stripe", twotone: "two-tone", flames: "flames",
+  checker: "checkers", bolt: "lightning", flag: "watawat" };
+// Designs for traffic cars too (some cars on the road get stripes or two colors)
+const TRAFFIC_DESIGNS = [
+  { design: "stripes", accent: "#ffffff" },
+  { design: "twotone", accent: "#1f2937", accent2: "#e5e7eb" },
+  { design: "racing", accent: "#111827", accent2: "#ffffff" },
+  { design: "checker", accent: "#111827", accent2: "#ffffff" },
+];
+
+// Paints a design on the BACK or FRONT of a car, inside the box x0..x1, yTop..yBot
+// (painter units: x from -0.5 to 0.5, y goes up = more negative)
+function paintDesign({ R, P, C }, col, x0, yTop, x1, yBot) {
+  const w = x1 - x0, h = yBot - yTop, cx = (x0 + x1) / 2, a = col.accent, a2 = col.accent2 || col.dark;
+  switch (col.design) {
+    case "stripes":                                   // twin racing stripes
+      R(cx - 0.085, yTop, 0.05, h, a);
+      R(cx + 0.035, yTop, 0.05, h, a);
+      break;
+    case "racing":                                    // one wide stripe with thin lines beside it
+      R(cx - 0.07, yTop, 0.14, h, a);
+      R(cx - 0.1, yTop, 0.014, h, a2);
+      R(cx + 0.086, yTop, 0.014, h, a2);
+      break;
+    case "twotone":                                   // bottom half in a second color
+      R(x0, yTop + h * 0.55, w, h * 0.45, a);
+      R(x0, yTop + h * 0.5, w, h * 0.06, a2);
+      break;
+    case "flames":                                    // flames coming up from both lower corners
+      for (const sd of [-1, 1]) {
+        const ex = sd < 0 ? x0 : x1;
+        const flame = (k, c) => P(c, [ex, yBot, ex - sd * 0.32 * k, yBot, ex - sd * 0.24 * k, yBot - h * 0.4 * k,
+          ex - sd * 0.28 * k, yBot - h * 0.75 * k, ex - sd * 0.15 * k, yBot - h * 0.45 * k, ex - sd * 0.12 * k, yBot - h * 0.95 * k,
+          ex - sd * 0.04 * k, yBot - h * 0.5 * k, ex, yBot - h * 0.75 * k]);
+        flame(1, a);
+        flame(0.6, a2);
+      }
+      break;
+    case "checker": {                                 // a checkered band across the middle
+      const q = h * 0.2, y1 = yTop + h * 0.32;
+      for (let i = 0; x0 + i * q < x1; i++) {
+        R(x0 + i * q, y1, q, q, i % 2 ? a2 : a);
+        R(x0 + i * q, y1 + q, q, q, i % 2 ? a : a2);
+      }
+      break;
+    }
+    case "bolt":                                      // a lightning bolt on each side
+      for (const sd of [-1, 1]) {
+        const bx = cx + sd * 0.3;
+        P(a2, [bx - 0.03, yTop + h * 0.05, bx + 0.07, yTop + h * 0.05, bx + 0.01, yTop + h * 0.45, bx + 0.08, yTop + h * 0.45,
+          bx - 0.06, yBot - h * 0.02, bx - 0.01, yTop + h * 0.58, bx - 0.08, yTop + h * 0.58]);
+        P(a, [bx - 0.02, yTop + h * 0.1, bx + 0.05, yTop + h * 0.1, bx, yTop + h * 0.48, bx + 0.06, yTop + h * 0.48,
+          bx - 0.05, yBot - h * 0.1, bx - 0.01, yTop + h * 0.55, bx - 0.065, yTop + h * 0.55]);
+      }
+      break;
+    case "flag":                                      // Philippine flag: blue top, red bottom, white triangle and a sun
+      R(x0, yTop + h * 0.5, w, h * 0.5, a);
+      P("#ffffff", [x0, yTop, x0 + w * 0.32, yTop + h * 0.5, x0, yBot]);
+      C(x0 + w * 0.1, yTop + h * 0.5, h * 0.13, a2);
+      for (const [sx, sy] of [[0.03, 0.12], [0.03, 0.88], [0.24, 0.5]]) C(x0 + w * sx, yTop + h * sy, h * 0.045, a2);
+      break;
+  }
+}
+// The same designs on the SIDE of a car (garage pictures). Uses "source-atop" so the
+// design only lands on the car's body that is already drawn (not on the background).
+function paintDesignSide(col, x0, yTop, x1, yBot) {
+  const w = x1 - x0, h = yBot - yTop, a = col.accent, a2 = col.accent2 || col.dark;
+  g.save();
+  g.globalCompositeOperation = "source-atop";
+  const R = (x, y, ww, hh, c) => { g.fillStyle = c; g.fillRect(x, y, ww, hh); };
+  const P = (c, pts) => fillPoly(g, c, pts);
+  switch (col.design) {
+    case "stripes":
+      R(x0, yTop + h * 0.42, w, h * 0.1, a);
+      R(x0, yTop + h * 0.58, w, h * 0.1, a);
+      break;
+    case "racing":
+      R(x0, yTop + h * 0.4, w, h * 0.24, a);
+      R(x0, yTop + h * 0.34, w, h * 0.04, a2);
+      R(x0, yTop + h * 0.66, w, h * 0.04, a2);
+      break;
+    case "twotone":
+      R(x0, yTop + h * 0.58, w, h * 0.42, a);
+      R(x0, yTop + h * 0.53, w, h * 0.06, a2);
+      break;
+    case "flames":                                    // flames from the front, licking back along the side
+      for (const [k, c] of [[1, a], [0.62, a2]]) {
+        const fx = x1 - w * 0.06, y = yTop + h * 0.55;
+        P(c, [fx, y - h * 0.32 * k, fx - w * 0.3 * k, y - h * 0.28 * k, fx - w * 0.2 * k, y - h * 0.12 * k,
+          fx - w * 0.45 * k, y - h * 0.05 * k, fx - w * 0.25 * k, y + h * 0.08 * k, fx - w * 0.5 * k, y + h * 0.2 * k,
+          fx - w * 0.22 * k, y + h * 0.26 * k, fx, y + h * 0.3 * k]);
+      }
+      break;
+    case "checker": {
+      const q = h * 0.16, y1 = yTop + h * 0.4;
+      for (let i = 0; x0 + i * q < x1; i++) {
+        R(x0 + i * q, y1, q, q, i % 2 ? a2 : a);
+        R(x0 + i * q, y1 + q, q, q, i % 2 ? a : a2);
+      }
+      break;
+    }
+    case "bolt": {                                    // one long lightning bolt along the side
+      const y = yTop + h * 0.5;
+      P(a2, [x0 + w * 0.05, y - 5, x0 + w * 0.42, y - 7, x0 + w * 0.38, y - 1, x0 + w * 0.95, y - 5,
+        x0 + w * 0.58, y + 7, x0 + w * 0.62, y + 1, x0 + w * 0.05, y + 3]);
+      P(a, [x0 + w * 0.07, y - 3, x0 + w * 0.42, y - 5, x0 + w * 0.39, y + 0, x0 + w * 0.92, y - 4,
+        x0 + w * 0.59, y + 5, x0 + w * 0.62, y - 0.5, x0 + w * 0.07, y + 1.5]);
+      break;
+    }
+    case "flag":
+      R(x0, yTop + h * 0.5, w, h * 0.5, a);
+      P("#ffffff", [x0, yTop, x0 + w * 0.22, yTop + h * 0.5, x0, yBot]);
+      g.fillStyle = a2;
+      g.beginPath(); g.arc(x0 + w * 0.07, yTop + h * 0.5, h * 0.12, 0, Math.PI * 2); g.fill();
+      break;
+  }
+  g.restore();
+}
 
 // Vehicles the player can drive (chosen in the garage on the home screen)
 //   maxSpeed = top speed, w = width
@@ -147,20 +275,45 @@ const PLAYER_COLORS = [
 // Steering is the same for every vehicle (PLAYER_GRIP).
 const PLAYER_GRIP = 0.23;
 const PLAYER_TYPES = [
-  { id: "sports",   name: "Sports Car",   w: 580, hit: 1,    maxSpeed: 245, colors: true,
+  { id: "sports",   name: "Sports Car",   w: 580, hit: 1,    maxSpeed: 240, colors: true,
     special: "Fastest car. Built for speed." },
-  { id: "electric", name: "Electric Car", w: 560, hit: 1,    maxSpeed: 220, colors: true, startSpeed: 125, powerMult: 1.6,
+  { id: "electric", name: "Electric Car", w: 560, hit: 1,    maxSpeed: 222, colors: true, startSpeed: 125, powerMult: 1.6,
     special: "Quick start. Magnet and Slow-mo last longer." },
-  { id: "muscle",   name: "Retro Muscle", w: 620, hit: 1,    maxSpeed: 238, colors: true, nearMult: 1.5,
+  { id: "muscle",   name: "Retro Muscle", w: 620, hit: 1,    maxSpeed: 234, colors: true, nearMult: 1.5,
     special: "Very fast. Close calls give +50% points." },
-  { id: "jeepney",  name: "Jeepney",      w: 660, hit: 1,    maxSpeed: 190, refillShield: true,
+  { id: "jeepney",  name: "Jeepney",      w: 660, hit: 1,    maxSpeed: 195, refillShield: true,
     special: "Matibay! Free shield in every new place." },
-  // The secret one: best at everything. The only way to unlock it: pay ₱650 from your Pera.
-  { id: "hari", name: "Hari ng Daan", tag: "E-BIKE", w: 440, hit: 0.75, maxSpeed: 250, locked: true, price: 650,
+  // The secret one: best at everything (even better than a fully upgraded car).
+  // The only way to unlock it: pay ₱2000 from your Pera.
+  { id: "hari", name: "Hari ng Daan", tag: "E-BIKE", w: 440, hit: 0.75, maxSpeed: 270, locked: true, price: 2000, maxed: true,
     startSpeed: 130, coinMult: 2, powerMult: 1.6, nearMult: 1.5, refillShield: true,
     special: "Ang Hari ng Daan! Max speed, slimmest, double ₱, all bonuses." },
 ];
 const DEMO_SPEED = 110;      // speed of the self-driving car on the home screen
+
+// ----- UPGRADES (bought with Pera in the garage) -----
+// Each vehicle has 2 upgrades with 5 levels each:
+//   Speed: +5 km/h top speed per level
+//   Slim:  6% narrower crash size per level (squeezes past traffic more easily)
+const UPGRADE_COST = [100, 200, 350, 500, 750];   // price of level 1, 2, 3, 4, 5
+const UPGRADE_MAX = UPGRADE_COST.length;
+const SPEED_PER_LEVEL = 5;
+const SLIM_PER_LEVEL = 0.94;
+let upgrades = loadUpgrades();         // e.g. { sports: { speed: 2, slim: 1 }, ... }
+function loadUpgrades() {
+  try { return JSON.parse(localStorage.getItem("highwayDashUpgrades")) || {}; }
+  catch { return {}; }
+}
+function saveUpgrades() {
+  try { localStorage.setItem("highwayDashUpgrades", JSON.stringify(upgrades)); } catch { /* ignore */ }
+}
+const upLevel = (pt, stat) => (upgrades[pt.id] && upgrades[pt.id][stat]) || 0;
+// The REAL numbers the game uses (base + upgrades)
+const topSpeed = (pt) => pt.maxSpeed + upLevel(pt, "speed") * SPEED_PER_LEVEL;
+const crashWidth = (pt) => pt.w * pt.hit * Math.pow(SLIM_PER_LEVEL, upLevel(pt, "slim"));
+// Turns them into a 1–10 rating for the garage (Hari ng Daan = 10 on both)
+const speedRating = (v) => Math.max(1, Math.min(10, (v - 180) / 9));
+const slimRating = (wid) => Math.max(1, Math.min(10, (700 - wid) / 37));
 
 // Seeded random: gives the same "random" track every time
 let seed = 7;
@@ -656,8 +809,221 @@ function drawWindmillBlades() {
   ctx.restore();
 }
 
+// ----- VISAYAS backgrounds (sea, islands, beaches) -----
+// A strip of sea at the horizon, with light sparkles on it
+function seaStrip(g, top, deep, light) {
+  const sea = g.createLinearGradient(0, HORIZON - top, 0, HORIZON);
+  sea.addColorStop(0, deep);
+  sea.addColorStop(1, light);
+  g.fillStyle = sea;
+  g.fillRect(0, HORIZON - top, LAYER_W, top + 2);
+  g.fillStyle = "rgba(255,255,255,0.45)";
+  for (let i = 0; i < 60; i++) g.fillRect(rand() * LAYER_W, HORIZON - top + 3 + rand() * (top - 6), 10 + rand() * 26, 1.5);
+}
+// A low island on the sea (x = middle, w = half-width, h = height)
+function island(g, x, w, h, color) {
+  wrapped(x, (px) => {
+    g.fillStyle = color;
+    g.beginPath();
+    g.moveTo(px - w, HORIZON - 14);
+    g.quadraticCurveTo(px - w * 0.5, HORIZON - 14 - h, px, HORIZON - 14 - h * 0.9);
+    g.quadraticCurveTo(px + w * 0.6, HORIZON - 14 - h * 1.1, px + w, HORIZON - 14);
+    g.fill();
+  });
+}
+// Cebu City: green mountains behind a city of towers by the sea
+backdrops.cebu = makeLayer((g) => {
+  farPeaks(g, "#cfe3d6");
+  for (const cx of [LAYER_W * 0.15, LAYER_W * 0.5, LAYER_W * 0.85]) {
+    const h = HORIZON * (0.45 + rand() * 0.15), half = h * 2.4;
+    smoothMountain(g, [[cx - half, 0], [cx - half * 0.4, h * 0.7], [cx, h], [cx + half * 0.5, h * 0.6], [cx + half, 0]], "#6fae7f", "#5a9a6b");
+  }
+  const colors = ["#e2e8f0", "#cbd5e1", "#bae6fd", "#f8fafc", "#a5b4fc"];
+  for (let i = 0; i < 70; i++) {                      // the city towers
+    const x = rand() * LAYER_W, w = 10 + rand() * 16, h = 18 + rand() * 60;
+    const c = colors[Math.floor(rand() * colors.length)];
+    wrapped(x, (px) => {
+      g.fillStyle = c;
+      g.fillRect(px, HORIZON - 12 - h, w, h);
+      g.fillStyle = "rgba(30,64,120,0.35)";
+      for (let wy = HORIZON - 12 - h + 4; wy < HORIZON - 16; wy += 6) g.fillRect(px + 2, wy, w - 4, 2);
+    });
+  }
+  seaStrip(g, 12, "#2b7bb9", "#5fb0e0");
+});
+// Bohol: the famous Chocolate Hills (lots of round brown-green hills)
+backdrops.bohol = makeLayer((g) => {
+  farPeaks(g, "#d5e6d0");
+  for (let row = 0; row < 3; row++) {
+    for (let i = 0; i < 46; i++) {
+      const x = rand() * LAYER_W, r = (14 + rand() * 12) * (1 - row * 0.2), y = HORIZON - 4 - (2 - row) * 9;
+      const c = row === 2 ? ["#8b6a3e", "#9a7848", "#7d6a36"] : ["#9c8a55", "#a99460", "#8f8a52"];
+      const col = c[Math.floor(rand() * 3)];
+      wrapped(x, (px) => {
+        g.fillStyle = col;
+        g.beginPath(); g.ellipse(px, y, r * 1.15, r, 0, Math.PI, Math.PI * 2); g.fill();
+        g.fillStyle = "rgba(255,240,200,0.25)";      // sunny side
+        g.beginPath(); g.ellipse(px - r * 0.3, y - r * 0.5, r * 0.45, r * 0.3, -0.4, 0, Math.PI * 2); g.fill();
+      });
+    }
+  }
+  g.fillStyle = "#6aa84f";
+  g.fillRect(0, HORIZON - 4, LAYER_W, 6);
+});
+// Iloilo: the sea strait with Guimaras island across, and rice fields
+backdrops.iloilo = makeLayer((g) => {
+  seaStrip(g, 30, "#3b6fa0", "#6aa7d1");
+  island(g, LAYER_W * 0.3, 260, 30, "#4f7f5c");
+  island(g, LAYER_W * 0.78, 200, 24, "#5a8a66");
+  for (let i = 0; i < 5; i++) {
+    g.fillStyle = i % 2 ? "#9bd36a" : "#86c45a";
+    g.fillRect(0, HORIZON - 12 + i * 2.6, LAYER_W, 2.6);
+  }
+});
+// Bacolod: Mt. Kanlaon volcano (smoking) and tall sugarcane fields with a sugar mill
+backdrops.sugarcane = makeLayer((g) => {
+  farPeaks(g, "#d9e4d2");
+  const cx = LAYER_W * 0.55, h = HORIZON * 0.72, half = h * 2.2;
+  smoothMountain(g, [[cx - half, 0], [cx - half * 0.3, h * 0.75], [cx - h * 0.12, h], [cx + h * 0.12, h], [cx + half * 0.35, h * 0.7], [cx + half, 0]], "#6d8f6a", "#587a56");
+  for (let i = 0; i < 6; i++) {                       // smoke from the crater
+    g.fillStyle = `rgba(230,230,230,${0.6 - i * 0.08})`;
+    g.beginPath(); g.arc(cx + i * 12, HORIZON - h - 10 - i * 12, 10 + i * 4, 0, Math.PI * 2); g.fill();
+  }
+  const mx = LAYER_W * 0.2;                           // sugar mill with a tall chimney
+  wrapped(mx, (px) => {
+    g.fillStyle = "#9ca3af"; g.fillRect(px, HORIZON - 34, 40, 22);
+    g.fillStyle = "#b45309"; g.fillRect(px + 30, HORIZON - 70, 7, 58);
+    g.fillStyle = "rgba(200,200,200,0.6)"; g.beginPath(); g.arc(px + 36, HORIZON - 78, 7, 0, Math.PI * 2); g.fill();
+  });
+  for (let x = 0; x < LAYER_W; x += 3) {              // the sugarcane: tall green stalks
+    const h2 = 12 + rand() * 7;
+    g.fillStyle = rand() < 0.5 ? "#4d9a34" : "#65b346";
+    g.fillRect(x, HORIZON - h2, 1.6, h2);
+  }
+});
+// Boracay: turquoise sea, white sand, small islands and paraw sailboats
+backdrops.boracay = makeLayer((g) => {
+  seaStrip(g, 40, "#0c7fb5", "#5eead4");
+  island(g, LAYER_W * 0.4, 120, 34, "#3f8f5c");
+  island(g, LAYER_W * 0.9, 80, 22, "#4b9a66");
+  const sails = ["#ef4444", "#facc15", "#22c55e", "#3b82f6", "#f97316", "#ec4899"];
+  for (let i = 0; i < 18; i++) {                      // paraw sailboats with colorful sails
+    const x = rand() * LAYER_W, y = HORIZON - 12 - rand() * 18, c = sails[i % sails.length];
+    wrapped(x, (px) => {
+      g.fillStyle = "#7c4a1e"; g.fillRect(px - 8, y, 16, 2.5);
+      g.strokeStyle = "#5b3a1e"; g.lineWidth = 1; g.beginPath(); g.moveTo(px - 12, y + 3); g.lineTo(px + 12, y + 3); g.stroke();   // outriggers
+      fillPoly(g, c, [px, y - 18, px + 9, y - 1, px - 1, y - 1]);
+      g.fillStyle = "#5b3a1e"; g.fillRect(px - 1, y - 19, 1.5, 19);
+    });
+  }
+  g.fillStyle = "#f5ecd7";                            // white sand beach
+  g.fillRect(0, HORIZON - 6, LAYER_W, 8);
+});
+
+// ----- MINDANAO backgrounds (rainforest, volcanoes, highlands, sea) -----
+// Bumpy rainforest treetops along the horizon
+function jungleCanopy(g, y, colors) {
+  for (let x = -20; x < LAYER_W + 20; x += 9 + rand() * 8) {
+    const r = 9 + rand() * 9, c = colors[Math.floor(rand() * colors.length)];
+    g.fillStyle = c;
+    g.beginPath(); g.arc(x, y - r * 0.5, r, Math.PI, Math.PI * 2); g.fill();
+    g.fillRect(x - r, y - r * 0.5, r * 2, r * 0.5 + 3);
+  }
+}
+// Cagayan de Oro: steep green hills and a river shining at the bottom
+backdrops.cdo = makeLayer((g) => {
+  farPeaks(g, "#c7d7cf");
+  for (let i = 0; i < 9; i++) {
+    const cx = (i / 9) * LAYER_W, h = HORIZON * (0.35 + rand() * 0.25), half = h * 1.1;
+    smoothMountain(g, [[cx - half, 0], [cx - half * 0.3, h * 0.85], [cx, h], [cx + half * 0.35, h * 0.8], [cx + half, 0]], "#3f7d4f", "#2f6a40");
+  }
+  g.fillStyle = "#7fb7d9";                            // the river
+  g.fillRect(0, HORIZON - 8, LAYER_W, 5);
+  g.fillStyle = "rgba(255,255,255,0.6)";
+  for (let i = 0; i < 40; i++) g.fillRect(rand() * LAYER_W, HORIZON - 7, 6 + rand() * 10, 1);   // white water
+  jungleCanopy(g, HORIZON + 2, ["#2f6a40", "#3f7d4f", "#2a5e39"]);
+});
+// Bukidnon: a high, flat plateau with pineapple fields and the Kitanglad mountains in clouds
+backdrops.bukidnon = makeLayer((g) => {
+  for (let i = 0; i < 5; i++) {
+    const cx = (i / 5) * LAYER_W + rand() * 60, h = HORIZON * (0.4 + rand() * 0.2), half = h * 2.6;
+    smoothMountain(g, [[cx - half, 0], [cx - half * 0.4, h * 0.7], [cx, h], [cx + half * 0.4, h * 0.75], [cx + half, 0]], "#7f9db8", "#6a88a3");
+    for (let k = 0; k < 4; k++) {                     // clouds sitting on the peaks
+      g.fillStyle = "rgba(255,255,255,0.85)";
+      g.beginPath(); g.ellipse(cx - 40 + k * 26, HORIZON - h + 6, 22, 9, 0, 0, Math.PI * 2); g.fill();
+    }
+  }
+  for (let i = 0; i < 8; i++) {                       // pineapple field rows (grey-green and yellow-green)
+    g.fillStyle = i % 2 ? "#7c9a6d" : "#a3b86c";
+    g.fillRect(0, HORIZON - 18 + i * 2.4, LAYER_W, 2.4);
+  }
+});
+// Davao: Mt. Apo, the highest mountain in the Philippines, with rainforest below
+backdrops.apo = makeLayer((g) => {
+  farPeaks(g, "#c9dccf");
+  for (const cx of [LAYER_W * 0.3, LAYER_W * 0.8]) {
+    const h = HORIZON * 0.85, half = h * 1.9;
+    smoothMountain(g, [[cx - half, 0], [cx - half * 0.45, h * 0.55], [cx - half * 0.12, h * 0.95], [cx - half * 0.04, h],
+      [cx + half * 0.04, h * 0.9], [cx + half * 0.12, h * 0.97], [cx + half * 0.5, h * 0.5], [cx + half, 0]], "#3d7a52", "#2e6643");
+    for (let k = 0; k < 6; k++) {                     // a ring of clouds around the middle
+      g.fillStyle = "rgba(255,255,255,0.8)";
+      g.beginPath(); g.ellipse(cx - half * 0.5 + k * half * 0.2, HORIZON - h * 0.55, 30, 10, 0, 0, Math.PI * 2); g.fill();
+    }
+  }
+  jungleCanopy(g, HORIZON + 2, ["#1f5e3a", "#2c7048", "#245f3c", "#3a8050"]);
+});
+// General Santos: a hot bay with big fishing boats and the fish port
+backdrops.gensan = makeLayer((g) => {
+  farPeaks(g, "#dccfb8");
+  seaStrip(g, 26, "#2f6f9e", "#5ea1cf");
+  for (let i = 0; i < 14; i++) {                      // big bancas (boats with outriggers)
+    const x = rand() * LAYER_W, y = HORIZON - 8 - rand() * 12;
+    const hull = ["#f8fafc", "#3b82f6", "#ef4444", "#facc15"][i % 4];
+    wrapped(x, (px) => {
+      fillPoly(g, hull, [px - 18, y, px + 18, y, px + 14, y + 5, px - 14, y + 5]);
+      g.strokeStyle = "#3f3f46"; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(px - 26, y + 6); g.lineTo(px + 26, y + 6); g.stroke();
+      g.fillStyle = "#e5e7eb"; g.fillRect(px - 6, y - 7, 12, 7);
+    });
+  }
+  for (let i = 0; i < 4; i++) {                       // port cranes
+    const x = LAYER_W * (0.1 + i * 0.25);
+    wrapped(x, (px) => {
+      g.fillStyle = "#f97316";
+      g.fillRect(px, HORIZON - 60, 4, 50);
+      g.fillRect(px - 24, HORIZON - 60, 40, 4);
+      g.fillRect(px - 22, HORIZON - 56, 2, 14);
+    });
+  }
+  g.fillStyle = "#9ca3af";
+  g.fillRect(0, HORIZON - 6, LAYER_W, 8);
+});
+// Zamboanga: the sea full of vintas (boats with striped, colorful sails) and Santa Cruz island
+backdrops.zambo = makeLayer((g) => {
+  seaStrip(g, 34, "#1d6fa5", "#55b3df");
+  island(g, LAYER_W * 0.62, 160, 22, "#4f8f5c");
+  wrapped(LAYER_W * 0.62, (px) => { g.fillStyle = "#f9b8c8"; g.fillRect(px - 150, HORIZON - 16, 300, 3); });   // pink sand beach
+  const stripes = [["#ef4444", "#facc15", "#22c55e", "#3b82f6"], ["#f97316", "#a855f7", "#facc15", "#ef4444"], ["#22c55e", "#ec4899", "#3b82f6", "#facc15"]];
+  for (let i = 0; i < 16; i++) {                      // vintas: rectangular sails with bright stripes
+    const x = rand() * LAYER_W, y = HORIZON - 8 - rand() * 18, cols = stripes[i % 3], sw = 14, sh = 18;
+    wrapped(x, (px) => {
+      g.fillStyle = "#5b3a1e"; g.fillRect(px - 12, y, 24, 3);
+      g.fillRect(px - 1, y - sh - 2, 1.5, sh + 2);
+      for (let k = 0; k < 4; k++) {
+        g.fillStyle = cols[k];
+        g.fillRect(px, y - sh + k * (sh / 4), sw - k, sh / 4);
+      }
+    });
+  }
+  g.fillStyle = "#e9d8a6";
+  g.fillRect(0, HORIZON - 5, LAYER_W, 7);
+});
+
+// The Visayas and Mindanao backgrounds (they draw their own hills, so the green hills hide)
+const NEW_BG = ["cebu", "bohol", "iloilo", "sugarcane", "boracay", "cdo", "bukidnon", "apo", "gensan", "zambo"];
 // How much each backdrop shows right now (they fade into each other)
-const bgWeight = { generic: 1, kalisungan: 0, makiling: 0, taal: 0, manila: 0, arayat: 0, baguio: 0, ilocos: 0 };
+const bgWeight = { generic: 1, kalisungan: 0, makiling: 0, taal: 0, manila: 0, arayat: 0, baguio: 0, ilocos: 0,
+  cebu: 0, bohol: 0, iloilo: 0, sugarcane: 0, boracay: 0, cdo: 0, bukidnon: 0, apo: 0, gensan: 0, zambo: 0 };
 
 const skyGradient = ctx.createLinearGradient(0, 0, 0, HORIZON);
 skyGradient.addColorStop(0, "#a9e3f2");
@@ -692,7 +1058,10 @@ let combo, comboT, kita, floods, floodTimer, inFlood, splashT, magnetMax, slowMa
 let odo, zones, scenery, sceneryQueue, nextLandmarkAt, nextFillerAt, landmarkSide = 1;
 
 let best = loadBest();
-let carChoice = loadCarChoice();     // color
+let ownedColors = loadOwnedColors(); // paint colors you bought
+let carChoice = loadCarChoice();     // the color shown in the garage (can be one you're only trying on)
+if (!PLAYER_COLORS[carChoice] || !ownedColors.includes(carChoice)) carChoice = 0;
+let ownedChoice = carChoice;         // the last color you own that you picked (the one you drive with)
 let typeChoice = loadTypeChoice();   // which vehicle
 let wallet = loadWallet();
 let hariUnlocked = loadHari();
@@ -769,6 +1138,7 @@ function resetGame() {
   scenery = [];
   sceneryQueue = [...LOCATIONS[0].landmarks];
   nextLandmarkAt = 0;
+  nextSkywayAt = 20000;
   // some small things already beside the road at the start
   for (let d = 15; d < DRAW_DIST * 0.9; d += 30) {
     addScenery(pickOne(LOCATIONS[0].fillers), d * SEG_LEN, d % 60 < 30 ? -1 : 1);
@@ -792,6 +1162,14 @@ function loadCarChoice() {
 }
 function saveCarChoice(v) {
   try { localStorage.setItem("highwayDashCar", v); } catch { /* ignore */ }
+}
+// Which paint colors you own (a list of numbers). Everyone starts with Candy Red (0).
+function loadOwnedColors() {
+  try { const list = JSON.parse(localStorage.getItem("highwayDashColors")); return Array.isArray(list) ? list : [0]; }
+  catch { return [0]; }
+}
+function saveOwnedColors() {
+  try { localStorage.setItem("highwayDashColors", JSON.stringify(ownedColors)); } catch { /* ignore */ }
 }
 function loadTypeChoice() {
   try { return Number(localStorage.getItem("highwayDashType")) || 0; }
@@ -912,7 +1290,17 @@ document.addEventListener("keydown", (e) => {
   if (k === "m") Sound.toggleMute();
   if (k === "b") Music.toggle();               // B = background music on/off
   if ([" ", "arrowleft", "arrowright"].includes(k)) e.preventDefault(); // don't scroll the page
-  if ((k === "enter" || k === " ") && (mode === "home" || mode === "over")) transition(startGame);
+  if (mode === "flight" && (k === "enter" || k === " " || k === "escape")) { skipFlight(); return; }
+  const onMaps = !mapsScreen.classList.contains("hidden");
+  if ((k === "enter" || k === " ") && mode === "home" && onMaps) chooseMap(mapChoice);   // start on the picked map
+  else if ((k === "enter" || k === " ") && mode === "home" && !homeScreen.classList.contains("hidden")) openMaps();
+  else if ((k === "enter" || k === " ") && mode === "over") transition(startGame);
+  if (k === "escape" && onMaps) transition(() => showScreen(homeScreen));
+  if (onMaps && (k === "arrowleft" || k === "arrowright")) {        // move between the maps
+    const keys = Object.keys(MAPS);
+    const i = (keys.indexOf(mapChoice) + (k === "arrowright" ? 1 : -1) + keys.length) % keys.length;
+    pickMap(keys[i]);
+  }
   if (k === "escape" && mode === "over") transition(goHome);
 });
 // pointerdown reacts the moment a finger touches (faster than "click" on phones)
@@ -935,7 +1323,7 @@ muteBtn.addEventListener("click", () => Sound.toggleMute());
 musicBtn.addEventListener("click", () => Music.toggle());
 
 // Home screen buttons
-document.getElementById("play-btn").addEventListener("click", () => transition(startGame));
+document.getElementById("play-btn").addEventListener("click", () => openMaps());
 document.getElementById("again-btn").addEventListener("click", () => transition(startGame));
 document.getElementById("home-btn").addEventListener("click", () => transition(goHome));
 document.getElementById("howto-btn").addEventListener("click", () => transition(() => {
@@ -947,17 +1335,58 @@ document.getElementById("back-btn").addEventListener("click", () => transition((
   homeScreen.classList.remove("hidden");
 }));
 
-// Car color picker: highlight the chosen swatch and remember it
-const swatches = document.querySelectorAll(".swatch");
+// Car color picker: one button per paint. Locked colors show a 🔒 and their price.
+// Clicking a locked color lets you try it on in the garage; "Bilhin" buys it.
+const swatchBox = document.getElementById("swatches");
+const colorBuyBtn = document.getElementById("color-buy");
+const colorNameEl = document.getElementById("color-name");
+PLAYER_COLORS.forEach((c, i) => {
+  const sw = document.createElement("button");
+  sw.className = "swatch";
+  sw.dataset.car = i;
+  // a shiny gradient: light top, main color, dark bottom
+  // two colors: the main paint with a band of the design color across it
+  sw.style.setProperty("--c", `linear-gradient(135deg, ${c.top} 0%, ${c.body} 40%, ${c.accent} 40%, ${c.accent} 58%, ${c.body} 58%, ${c.dark} 100%)`);
+  sw.setAttribute("aria-label", c.name);
+  sw.title = `${c.name} (${DESIGN_NAMES[c.design]})`;
+  sw.innerHTML = `<span class="lock">🔒</span><span class="price">₱${c.price}</span>`;
+  sw.addEventListener("click", () => {
+    carChoice = i;
+    if (ownedColors.includes(i)) {               // you own it: drive with it from now on
+      ownedChoice = i;
+      saveCarChoice(i);
+    }
+    if (typeof showGarage === "function") showGarage();   // redraw the garage picture
+    showCarChoice();
+  });
+  swatchBox.appendChild(sw);
+});
 function showCarChoice() {
-  swatches.forEach((sw) => sw.classList.toggle("selected", Number(sw.dataset.car) === carChoice));
+  const owned = ownedColors.includes(carChoice), c = PLAYER_COLORS[carChoice];
+  for (const sw of swatchBox.children) {
+    const i = Number(sw.dataset.car);
+    sw.classList.toggle("selected", i === carChoice);
+    sw.classList.toggle("locked", !ownedColors.includes(i));
+  }
+  colorNameEl.textContent = `${c.name} · ${DESIGN_NAMES[c.design]}`;
+  colorBuyBtn.classList.toggle("hidden", owned);
+  colorBuyBtn.textContent = `Bilhin ₱${c.price}`;
+  colorBuyBtn.disabled = wallet < c.price;
 }
-swatches.forEach((sw) => sw.addEventListener("click", () => {
-  carChoice = Number(sw.dataset.car);
-  if (typeof showGarage === "function") showGarage();   // redraw the garage picture
+colorBuyBtn.addEventListener("click", () => {
+  const c = PLAYER_COLORS[carChoice];
+  if (ownedColors.includes(carChoice) || wallet < c.price) return;
+  wallet -= c.price;
+  saveWallet(wallet);
+  ownedColors.push(carChoice);
+  saveOwnedColors();
+  ownedChoice = carChoice;
   saveCarChoice(carChoice);
+  Sound.init();
+  Sound.coin();
+  showGarage();
   showCarChoice();
-}));
+});
 showCarChoice();
 
 // Garage: choose your vehicle with ◀ ▶ (or the arrow keys on the home screen)
@@ -1090,7 +1519,7 @@ function sideSports(col) {
     c.quadraticCurveTo(264, 98, 258, 106);                    // nose
     c.lineTo(250, 110);
   });
-  sv.R(28, 99, 226, 3, "rgba(255,255,255,0.9)");              // racing stripe
+  paintDesignSide(col, 18, 82, 262, 111);                     // the paint's design (stripes, flames, ...)
   sv.path("#151515", (c) => { c.moveTo(94, 104); c.lineTo(192, 104); c.lineTo(190, 111); c.lineTo(96, 111); });   // side skirt
   sv.line("rgba(255,255,255,0.5)", 2, (c) => { c.moveTo(34, 89); c.bezierCurveTo(100, 85, 180, 84, 250, 90); });  // shine on the shoulder
   sv.path("#111111", (c) => { c.moveTo(104, 92); c.quadraticCurveTo(118, 87, 134, 89); c.lineTo(127, 101); c.quadraticCurveTo(114, 102, 106, 100); });   // air scoop
@@ -1117,6 +1546,7 @@ function sideSports(col) {
 function sideElectric(col) {
   sv.shadow(30, 260);
   sv.P(col.body, [26, 112, 26, 94, 42, 86, 96, 82, 128, 62, 186, 60, 220, 79, 252, 87, 258, 99, 256, 112, 26, 112]);
+  paintDesignSide(col, 24, 82, 260, 112);                     // the paint's design
   sv.P("#1e293b", [100, 82, 130, 65, 184, 63, 214, 80]);      // all-glass roof
   sv.P("rgba(255,255,255,0.3)", [150, 64, 160, 64, 148, 81, 138, 81]);
   sv.R(24, 93, 6, 4, "#ff2d55");                              // light strips
@@ -1134,10 +1564,9 @@ function sideElectric(col) {
 function sideMuscle(col) {
   sv.shadow(24, 262);
   sv.P(col.body, [20, 112, 20, 90, 34, 85, 92, 83, 116, 66, 160, 64, 180, 82, 254, 85, 260, 97, 258, 112, 20, 112]);
+  paintDesignSide(col, 16, 83, 262, 112);                     // the paint's design (before the window)
   sv.P(col.dark, [20, 90, 34, 85, 34, 83, 16, 86]);           // ducktail
   sv.glass([118, 82, 136, 69, 158, 67, 172, 82]);
-  sv.R(26, 95, 228, 3, "#ffffff");                            // twin stripes
-  sv.R(26, 100, 228, 3, "#ffffff");
   sv.P("#111111", [196, 85, 222, 85, 218, 79, 200, 79]);      // hood scoop
   sv.R(14, 102, 10, 6, "#d7dde2");                            // chrome bumpers
   sv.R(256, 98, 10, 6, "#d7dde2");
@@ -1315,8 +1744,7 @@ function frontSports(x, y, w, col) {
   P("#e0f2fe", [0.5, -0.28, 0.25, -0.27, 0.29, -0.235, 0.49, -0.235]);
   R(-0.45, -0.262, 0.14, 0.008, "#38bdf8");
   R(0.31, -0.262, 0.14, 0.008, "#38bdf8");
-  R(-0.07, -0.29, 0.045, 0.17, "rgba(255,255,255,0.85)");
-  R(0.025, -0.29, 0.045, 0.17, "rgba(255,255,255,0.85)");
+  paintDesign({ R, P, C }, col, -0.5, -0.29, 0.5, -0.12);   // the paint's design
   C(0, -0.22, 0.025, "#facc15");                       // badge
 }
 function frontElectric(x, y, w, col) {
@@ -1324,6 +1752,7 @@ function frontElectric(x, y, w, col) {
   tire(R, -0.48, -0.14, 0.15, 0.14);
   tire(R, 0.33, -0.14, 0.15, 0.14);
   R(-0.5, -0.36, 1, 0.24, col.body);
+  paintDesign({ R, P, C: painter(x, y, w).C }, col, -0.5, -0.36, 0.5, -0.12);
   R(-0.48, -0.31, 0.96, 0.02, "#e0f2fe");                // full-width light bar
   R(-0.48, -0.312, 0.96, 0.006, "#ffffff");
   R(-0.3, -0.2, 0.6, 0.05, col.dark);                     // closed grille (no engine!)
@@ -1348,8 +1777,7 @@ function frontMuscle(x, y, w, col) {
     C(hx, -0.29, 0.045, "#fef9c3");
   }
   C(0, -0.29, 0.025, "#d4a017");                          // gold badge
-  R(-0.09, -0.38, 0.05, 0.18, "#ffffff");
-  R(0.04, -0.38, 0.05, 0.18, "#ffffff");
+  paintDesign({ R, P, C }, col, -0.5, -0.38, 0.5, -0.2);
   P(col.top, [-0.5, -0.38, 0.5, -0.38, 0.44, -0.44, -0.44, -0.44]);
   P("#111111", [-0.1, -0.44, 0.1, -0.44, 0.08, -0.48, -0.08, -0.48]);   // hood scoop
   P("#1f2a33", [-0.32, -0.46, 0.32, -0.46, 0.28, -0.62, -0.28, -0.62]);
@@ -1434,6 +1862,16 @@ let faces = null, facesKey = "";
 function buildFaces(pt) {
   const key = pt.id + carChoice;
   if (key === facesKey) return faces;
+  try {
+    return makeFaces(pt, key);
+  } finally {                                    // always give the real screen back
+    ctx = gameCtx;
+    g = previewCanvas.getContext("2d");
+    noShadow = false;
+    svFlip = false;
+  }
+}
+function makeFaces(pt, key) {
   facesKey = key;
   const col = PLAYER_COLORS[carChoice];
   // 1) side view (drawn by the old garage functions, which paint on "g")
@@ -1682,11 +2120,19 @@ function drawGarage(pt) {
     fill(quad(d0, d1, prof.belt, prof.belt, 0.96, 0.96), paint.top);
     const pieces = prof.pieces.map(([u0, u1, h0, h1, v0, v1, kind], i) => {
       const q = quad(u0, u1, h0, h1, v0, v1);
-      return { q, kind, z: q.reduce((m, p) => m + p.z, 0) / 4 + i * 0.001 };   // (+ a tiny bit keeps the list order on ties)
+      return { q, kind, src: [u0, u1, h0, h1], z: q.reduce((m, p) => m + p.z, 0) / 4 + i * 0.001 };   // (+ a tiny bit keeps the list order on ties)
     }).filter((pc) => Math.sign(area(pc.q)) === ref);   // skip pieces that face away from us
     pieces.sort((p1, p2) => p1.z - p2.z);              // far pieces first
+    // stripes continue over the hood, roof and trunk (for striped paints)
+    const bands = col.design === "stripes" ? [[-0.17, -0.07], [0.07, 0.17]] : col.design === "racing" ? [[-0.14, 0.14]] : [];
+    const band = (pc, vA, vB, color) => {
+      const [u0, u1, h0, h1] = pc.src;
+      const P = (u, v, hh) => { const q = pt2(u * a, v * b); return { x: q.x, y: q.y - (hh + 0.004) * f.h * s }; };
+      fill([P(u1, vB, h1), P(u1, vA, h1), P(u0, vA, h0), P(u0, vB, h0)], color);
+    };
     for (const pc of pieces) {
       fill(pc.q, paint[pc.kind]);
+      if (pt.colors && (pc.kind === "top" || pc.kind === "body")) for (const [vA, vB] of bands) band(pc, vA, vB, col.accent);
       if (pc.kind === "glass") {                       // a light shine line across the glass
         const m = (p1, p2, t) => ({ x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t });
         const A = m(pc.q[0], pc.q[1], 0.25), B = m(pc.q[0], pc.q[1], 0.38), C = m(pc.q[3], pc.q[2], 0.3), D = m(pc.q[3], pc.q[2], 0.17);
@@ -1797,24 +2243,53 @@ function showGarage() {
   const locked = isLocked(pt);
   const nameEl = document.getElementById("car-name");
   nameEl.textContent = "";
-  if (pt.tag) {                                   // a small badge in front, like: [E-BIKE] "Hari ng Daan"
+  if (pt.tag) {                                   // a big badge first, then a smaller name: [E-BIKE] "Hari ng Daan"
     const badge = document.createElement("span");
-    badge.className = "tag";
+    badge.className = "tag big-tag";
     badge.textContent = pt.tag;
-    nameEl.appendChild(badge);
-    nameEl.append(`"${pt.name}"`);                // the name in quotes after the badge
+    const sub = document.createElement("span");
+    sub.className = "car-sub";
+    sub.textContent = `"${pt.name}"`;
+    nameEl.append(badge, sub);
   } else {
     nameEl.append(pt.name);
   }
   document.getElementById("car-special").textContent = pt.special;
-  const pct = (v, lo, hi) => Math.max(8, Math.min(100, ((v - lo) / (hi - lo)) * 100)) + "%";
-  document.getElementById("stat-speed").style.width = pct(pt.maxSpeed, 180, 250);
-  // Slim: the thinner the vehicle, the easier it squeezes past traffic
-  document.getElementById("stat-slim").style.width = pct(680 - pt.w * pt.hit, 0, 680 - 330);
+  // Speed and Slim: a 10-block meter. Yellow = the vehicle itself, green = your upgrades.
+  const base = { speed: speedRating(pt.maxSpeed), slim: slimRating(pt.w * pt.hit) };
+  const now = { speed: speedRating(topSpeed(pt)), slim: slimRating(crashWidth(pt)) };
+  for (const stat of ["speed", "slim"]) {
+    const meter = document.getElementById("stat-" + stat);
+    meter.innerHTML = "";
+    for (let i = 0; i < 10; i++) {
+      const cell = document.createElement("i");
+      if (i < Math.round(base[stat])) cell.className = "on";
+      else if (i < Math.round(now[stat])) cell.className = "up";
+      meter.appendChild(cell);
+    }
+    const lvl = upLevel(pt, stat);
+    document.getElementById("val-" + stat).textContent =
+      stat === "speed" ? `${topSpeed(pt)} km/h` : `${Math.round(now.slim)}/10`;
+    const btn = document.getElementById("up-" + stat);
+    if (pt.maxed) {                                // Hari ng Daan is already the best
+      btn.textContent = "MAX";
+      btn.disabled = true;
+    } else if (lvl >= UPGRADE_MAX) {
+      btn.textContent = "MAX ✓";
+      btn.disabled = true;
+    } else {
+      btn.textContent = `⬆ ₱${UPGRADE_COST[lvl]}`;
+      btn.disabled = locked || wallet < UPGRADE_COST[lvl];
+    }
+    btn.title = pt.maxed ? "Already maxed out" : `Level ${lvl}/${UPGRADE_MAX}`;
+    document.getElementById("lvl-" + stat).textContent = pt.maxed ? "" : `Lv ${lvl}/${UPGRADE_MAX}`;
+  }
+  document.getElementById("buy-btn").textContent = `Bilhin ₱${pt.price || 0}`;
   document.getElementById("color-row").classList.toggle("hidden", !pt.colors);
   document.getElementById("lock-box").classList.toggle("hidden", !locked);
   document.getElementById("buy-btn").disabled = wallet < pt.price;
   document.getElementById("wallet").textContent = wallet;
+  if (typeof showCarChoice === "function") showCarChoice();
   document.getElementById("play-btn").disabled = locked;
   previewCanvas.classList.toggle("locked", locked);
   drawGarage(pt);
@@ -1832,7 +2307,28 @@ function unlockHari() {
   showGarage();
 }
 
-// Buy Hari ng Daan from your Pera (the price is in PLAYER_TYPES, now ₱650)
+// Buy one upgrade level for the vehicle you're looking at
+function buyUpgrade(stat) {
+  const pt = PLAYER_TYPES[typeChoice];
+  const lvl = upLevel(pt, stat);
+  if (pt.maxed || isLocked(pt) || lvl >= UPGRADE_MAX || wallet < UPGRADE_COST[lvl]) return;
+  wallet -= UPGRADE_COST[lvl];
+  saveWallet(wallet);
+  upgrades[pt.id] = upgrades[pt.id] || { speed: 0, slim: 0 };
+  upgrades[pt.id][stat] = lvl + 1;
+  saveUpgrades();
+  Sound.init();
+  Sound.powerup();
+  showGarage();
+  const btn = document.getElementById("up-" + stat);   // a little "pop" on the meter
+  btn.closest(".stat").classList.remove("pop");
+  void btn.offsetWidth;
+  btn.closest(".stat").classList.add("pop");
+}
+document.getElementById("up-speed").addEventListener("click", () => buyUpgrade("speed"));
+document.getElementById("up-slim").addEventListener("click", () => buyUpgrade("slim"));
+
+// Buy Hari ng Daan from your Pera (the price is in PLAYER_TYPES, now ₱2000)
 document.getElementById("buy-btn").addEventListener("click", () => {
   const price = PLAYER_TYPES.find((t) => t.id === "hari").price;
   if (wallet < price) return;
@@ -1846,7 +2342,7 @@ document.getElementById("buy-btn").addEventListener("click", () => {
 document.getElementById("prev-car").addEventListener("click", () => changeType(-1));
 document.getElementById("next-car").addEventListener("click", () => changeType(1));
 document.addEventListener("keydown", (e) => {
-  if (mode !== "home") return;
+  if (mode !== "home" || homeScreen.classList.contains("hidden")) return;   // only on the garage screen
   if (e.key === "ArrowLeft") changeType(-1);
   if (e.key === "ArrowRight") changeType(1);
 });
@@ -1855,6 +2351,7 @@ document.addEventListener("keydown", (e) => {
 // Swipe controls for phones: swipe left or right on the game to change lanes
 let touchX = null, touchY = null, touchTime = 0;
 const stage = document.querySelector(".stage");
+stage.addEventListener("pointerdown", () => skipFlight());   // tap to skip the flight
 stage.addEventListener("touchstart", (e) => {
   touchX = e.touches[0].clientX;
   touchY = e.touches[0].clientY;
@@ -2032,6 +2529,8 @@ const Sound = {
   shatter() { [0, 0.05, 0.11, 0.19].forEach((d, i) => this.noise(0.18 - i * 0.03, 0.35, 4500 + i * 900, "highpass", d)); },
   // Metal parts hitting the road: short "klang" tones
   clank(delay = 0) { this.tone(420 + Math.random() * 300, 0.12, "square", 0.08, 180, delay); },
+  // A jet plane flying by: a long rushing sound that rises and falls
+  jet() { this.noise(3, 0.22, 500); this.noise(2.4, 0.08, 2200, "bandpass", 0.3); this.tone(80, 3, "sawtooth", 0.04, 120); },
   // Tires screeching when you brake hard
   screech() { this.tone(1300, 0.6, "sawtooth", 0.07, 900); this.noise(0.6, 0.25, 2600, "bandpass"); },
   introHorn() {  // the intro: "beep-beep-beeeep!" plus a little engine rev
@@ -2210,7 +2709,7 @@ const Music = {
     if (!this.gain) return;
     const driving = mode === "playing" || mode === "countdown" || mode === "crash";
     if (!driving) this.want = "menu";
-    else if (currentLocation().name === "Manila") this.want = "boss";
+    else if (currentLocation().boss) this.want = "boss";
     else if (atmo.night > 0.5) this.want = "night";
     else this.want = "drive";
     let target = driving ? 1 : 0.75;
@@ -2312,48 +2811,124 @@ document.getElementById("sfx-toggle").addEventListener("click", () => { Sound.in
 document.getElementById("music-toggle").addEventListener("click", () => { Sound.init(); Music.start(); Music.toggle(); });
 syncAudioButtons();
 
-// ----- 9d. LOCATIONS, WEATHER and TIME OF DAY -----
-// Every LEVEL_SCORE points you reach the next place. Each place has its own
-// time of day and weather. After Manila it starts again from Calauan (lap 2).
+// ----- 9d. MAPS, LOCATIONS, WEATHER and TIME OF DAY -----
+// There are 3 maps: Luzon, Visayas and Mindanao. Each map is a list of places.
+// Every 2.5 km you reach the next place. Each place has its own time of day and
+// weather. After the last place the trip starts again from the first one (lap 2).
+// Special settings a place can have:
+//   heat: true    = TAG-INIT challenge (wiggly hot road, less traffic, +₱100 bonus)
+//   boss: true    = big city, plays the "boss" music
+//   kalesa: true  = horse carriages in the traffic
+//   palms / pines / jungle: true = which trees grow beside the road
+//   skyway: true  = raised highways cross above the road, planes: true = airplanes in the sky
+//   fog: true     = misty, grass: [[r,g,b],[r,g,b]] = ground color, icon = emoji for the map
 const LOCATION_DIST = 250000;              // road distance from one place to the next
 const UNITS_PER_KM = LOCATION_DIST / 2.5;  // so each place is 2.5 km apart
 // landmarks = places you pass, in this order. fillers = smaller things in between.
 // bg = which mountain is in the background. Places without fillers just have trees.
-const LOCATIONS = [
-  { name: "Calauan", time: "day", rain: false, bg: "kalisungan", note: "Pineapple country! Next stop: PUP Calauan",
+const LUZON = [
+  { name: "Calauan", icon: "🍍", kalesa: true, time: "day", rain: false, bg: "kalisungan", note: "Pineapple country! Next stop: PUP Calauan",
     landmarks: ["pineapple", "farm", "burger", "chicken", "church", "pup"],
     fillers: ["kubo", "pinefield", "pinefield", "taho", "sorbetes"] },
-  { name: "Bay", time: "day", rain: false, bg: "makiling", note: "Halaman at monay! Food trip in Bay",
+  { name: "Bay", icon: "🥖", time: "day", rain: false, bg: "makiling", note: "Halaman at monay! Food trip in Bay",
     landmarks: ["garden", "bakery", "burger", "chicken", "garden", "church", "bucket", "hospital", "bakery"],
     fillers: ["house", "store", "fishball", "taho"] },
-  { name: "Los Baños", time: "day", rain: true, bg: "makiling", floods: true, note: "Rainy season! Baha sa daan!",
+  { name: "Los Baños", icon: "🌧️", time: "day", rain: true, bg: "makiling", floods: true, note: "Rainy season! Baha sa daan!",
     landmarks: ["cafe", "mall", "school", "cafe", "mall", "school"],
     fillers: ["cafe", "house", "store", "fishball", "sorbetes"] },
-  { name: "Calamba", time: "day", rain: false, bg: "makiling", note: "Rizal Shrine and resorts! Swimming time",
+  { name: "Calamba", icon: "🔥", heat: true, time: "day", rain: false, bg: "makiling", note: "Rizal Shrine and resorts! Swimming time",
     landmarks: ["rizal", "slides", "pool", "slides", "pool"],
     fillers: ["palm", "palm", "pool", "sorbetes"], palms: true },
-  { name: "SLEX",      time: "night",  rain: false, note: "Night drive. Watch the tail lights" },
-  { name: "Tagaytay",  time: "sunset", rain: false, bg: "taal", note: "Taal Volcano at sunset" },
-  { name: "Manila",    time: "night",  rain: false, bg: "manila", note: "City lights at night!" },
+  { name: "SLEX", icon: "🌙", skyway: true, time: "night",  rain: false, note: "Night drive. Watch the tail lights" },
+  { name: "Tagaytay", icon: "🌋",  time: "sunset", rain: false, bg: "taal", note: "Taal Volcano at sunset" },
+  { name: "Manila", icon: "🏙️", boss: true, kalesa: true, skyway: true, planes: true, time: "night",  rain: false, bg: "manila", note: "City lights at night!" },
   // After Manila the trip goes north on NLEX
-  { name: "Pampanga", time: "day", rain: false, bg: "arayat", note: "Christmas capital! Giant parols and sisig",
+  { name: "Pampanga", icon: "⭐", skyway: true, time: "day", rain: false, bg: "arayat", note: "Christmas capital! Giant parols and sisig",
     landmarks: ["parol", "sisig", "ricefield", "parol", "church", "sisig"],
     fillers: ["parolpole", "parolpole", "ricefield", "kubo"],
     grass: [[146, 214, 98], [134, 204, 88]] },              // bright rice-field green
-  { name: "Baguio", time: "day", rain: false, bg: "baguio", fog: true, pines: true, note: "Summer capital! Cool air, fog and pine trees",
+  { name: "Baguio", icon: "🌲", time: "day", rain: false, bg: "baguio", fog: true, pines: true, note: "Summer capital! Cool air, fog and pine trees",
     landmarks: ["cathedral", "burnham", "strawberry", "ubestore", "strawberry"],
     fillers: ["pines", "pines", "house", "ubestore"],
     grass: [[86, 152, 106], [78, 142, 98]] },               // dark mountain green
-  { name: "Ilocos", time: "sunset", rain: false, bg: "ilocos", palms: true, note: "Vigan heritage and Bangui windmills",
+  { name: "Ilocos", icon: "🌬️", kalesa: true, time: "sunset", rain: false, bg: "ilocos", palms: true, note: "Vigan heritage and Bangui windmills",
     landmarks: ["vigan", "windmill", "paoay", "empanada", "windmill", "vigan"],
     fillers: ["lamppost", "lamppost", "empanada", "windmill"],
     grass: [[206, 196, 132], [196, 186, 122]] },            // dry sandy ground by the sea
 ];
+// VISAYAS: island hopping (beaches, churches, sea, sugarcane)
+const VISAYAS = [
+  { name: "Cebu City", icon: "✝️", boss: true, kalesa: true, skyway: true, planes: true, time: "day", rain: false, bg: "cebu", palms: true,
+    note: "Queen City of the South! Magellan's Cross and lechon",
+    landmarks: ["magellan", "santonino", "lechon", "santonino", "lechon", "magellan"],
+    fillers: ["house", "store", "lechon", "palm"] },
+  { name: "Bohol", icon: "🐒", time: "day", rain: false, bg: "bohol", palms: true,
+    note: "Chocolate Hills and the tiny tarsier!",
+    landmarks: ["tarsier", "loboc", "baclayon", "tarsier", "loboc"],
+    fillers: ["chochill", "chochill", "kubo", "palm"],
+    grass: [[130, 186, 92], [120, 176, 84]] },
+  { name: "Iloilo", icon: "🍜", time: "sunset", rain: false, bg: "iloilo", palms: true,
+    note: "Miagao Church and hot La Paz batchoy",
+    landmarks: ["miagao", "batchoy", "ricefield", "miagao", "batchoy"],
+    fillers: ["kubo", "ricefield", "house", "batchoy"] },
+  { name: "Bacolod", icon: "🎭", time: "day", rain: false, bg: "sugarcane",
+    note: "City of Smiles! MassKara masks and chicken inasal",
+    landmarks: ["masskara", "ruins", "inasal", "masskara", "inasal"],
+    fillers: ["cane", "cane", "house", "store"],
+    grass: [[150, 200, 92], [140, 190, 84]] },
+  { name: "Boracay", icon: "⛵", time: "sunset", rain: false, bg: "boracay", palms: true,
+    note: "White sand, sailboats and the best sunsets!",
+    landmarks: ["paraw", "willys", "beachbar", "paraw", "beachbar"],
+    fillers: ["palm", "palm", "beachbar"],
+    grass: [[240, 232, 210], [232, 222, 198]] },            // white sand
+];
+// MINDANAO: rainforest, volcanoes and highlands
+const MINDANAO = [
+  { name: "Cagayan de Oro", icon: "🛶", time: "day", rain: true, bg: "cdo", jungle: true,
+    note: "Whitewater rafting and ziplines! (It's raining)",
+    landmarks: ["rafting", "zipline", "rafting", "zipline"],
+    fillers: ["house", "store", "kubo"],
+    grass: [[96, 168, 90], [88, 158, 82]] },
+  { name: "Bukidnon", icon: "🤠", fog: true, time: "day", rain: false, bg: "bukidnon",
+    note: "Highlands! Pineapple fields, ranches and cool mist",
+    landmarks: ["pineapples", "ranch", "monastery", "pineapples", "ranch"],
+    fillers: ["pinefield", "pinefield", "kubo"],
+    grass: [[122, 182, 98], [112, 172, 90]] },
+  { name: "Davao", icon: "🦅", boss: true, skyway: true, planes: true, time: "day", rain: false, bg: "apo", jungle: true,
+    note: "Mt. Apo, the Philippine Eagle and durian!",
+    landmarks: ["eagle", "durian", "eagle", "durian"],
+    fillers: ["durian", "house", "store"],
+    grass: [[84, 156, 86], [76, 146, 78]] },
+  { name: "General Santos", icon: "🐟", heat: true, time: "day", rain: false, bg: "gensan", palms: true,
+    note: "Tuna Capital! So hot: TAG-INIT!",
+    landmarks: ["tuna", "fishport", "tuna", "fishport"],
+    fillers: ["palm", "house", "store"] },
+  { name: "Zamboanga", icon: "🏰", time: "sunset", rain: false, bg: "zambo", palms: true,
+    note: "Asia's Latin City! Fort Pilar and colorful vintas",
+    landmarks: ["fortpilar", "vinta", "fortpilar", "vinta"],
+    fillers: ["palm", "lamppost", "vinta"],
+    grass: [[214, 200, 150], [204, 190, 140]] },
+];
+// The 3 maps (the map screen shows each one's route)
+const MAPS = {
+  luzon:    { name: "LUZON",    icon: "🌋", theme: "Mountains and cities",   color: "#16a34a", places: LUZON },
+  visayas:  { name: "VISAYAS",  icon: "🏝️", theme: "Islands and beaches",    color: "#0ea5e9", places: VISAYAS },
+  mindanao: { name: "MINDANAO", icon: "🦅", theme: "Rainforest and volcanoes", color: "#ea580c", places: MINDANAO },
+};
+function loadMapChoice() {
+  try { const m = localStorage.getItem("highwayDashMap"); return MAPS[m] ? m : "luzon"; }
+  catch { return "luzon"; }
+}
+function saveMapChoice(m) {
+  try { localStorage.setItem("highwayDashMap", m); } catch { /* ignore */ }
+}
+let mapChoice = loadMapChoice();
+let LOCATIONS = MAPS[mapChoice].places;                    // the places of the map you're driving
 const currentLocation = () => LOCATIONS[level % LOCATIONS.length];
 // How many vehicles can be on the road at once in this place
 function carLimit() {
   const normal = Math.min(14, 6 + level * 2);
-  return currentLocation().name === "Calamba" ? 4 : normal;   // Calamba: much less traffic (the heat is the challenge)
+  return currentLocation().heat ? 4 : normal;   // TAG-INIT: much less traffic (the heat is the challenge)
 }
 
 // How much night / sunset / rain there is right now (0 = none, 1 = full).
@@ -2381,9 +2956,9 @@ function updateAtmosphere(dt) {
 function updateLevel() {
   const newLevel = Math.floor(odo / LOCATION_DIST);   // based on distance driven
   if (newLevel > level) {
-    const leaving = currentLocation().name;
+    const leaving = currentLocation();
     level = newLevel;
-    if (leaving === "Calamba") {                       // survived the TAG-INIT challenge!
+    if (leaving.heat) {                                // survived the TAG-INIT challenge!
       kita += 100;
       popup("TAG-INIT SURVIVOR! +₱100", "#fb923c");
     }
@@ -2438,9 +3013,15 @@ function addScenery(kind, at, side, isLandmark = false) {
   scenery.push({ kind, at, end: at + depth, side, z: at % TRACK_LEN, x: offset, scale, variant: Math.random() });
 }
 
+let nextSkywayAt = 0;            // where the next skyway crosses the road
 function updateScenery() {
   const spawnAt = odo + DRAW_DIST * 0.95 * SEG_LEN;   // new things appear near the horizon
   const loc = locationAt(spawnAt);
+  if (loc.skyway && spawnAt >= nextSkywayAt) {        // cities and expressways have skyways overhead
+    scenery.push({ kind: "skyway", at: spawnAt, end: spawnAt, side: 0, z: spawnAt % TRACK_LEN, x: 0, scale: 1,
+      variant: Math.random() });
+    nextSkywayAt = spawnAt + 45000 + Math.random() * 35000;
+  }
   if (sceneryQueue.length === 0 && mode === "home") sceneryQueue = [...(loc.landmarks || [])];
 
   if (sceneryQueue.length && spawnAt >= nextLandmarkAt) {
@@ -2744,7 +3325,7 @@ function updateCrossing(dt, wdt, prevPz, pz) {
   const now = relZ(crossing.z, pz);
   if (before >= -CAR_LEN * 0.5 && now < CAR_LEN && invulnT <= 0) {
     const pt = ptype();
-    const touch = ((PED_W + pt.w * pt.hit) / 2 / ROAD_W) * 0.85;
+    const touch = ((PED_W + crashWidth(pt)) / 2 / ROAD_W) * 0.85;
     const hit = crossing.peds.find((p) => Math.abs(p.x) < 1.2 && Math.abs(p.x - playerX) < touch);
     if (hit) {
       if (shield) {
@@ -2933,7 +3514,7 @@ function update(dt, demo = false) {
     speed = DEMO_SPEED;
     if (Math.floor(frame) % 8 === 0) autoSteer();
   } else {
-    speed = Math.min(speed + 0.02 * wdt, ptype().maxSpeed);
+    speed = Math.min(speed + 0.02 * wdt, topSpeed(ptype()));   // (upgrades raise the top speed)
   }
 
   const prevPz = playerZ();         // where we were at the start of this frame
@@ -3003,7 +3584,7 @@ function update(dt, demo = false) {
     // (x0.85 so a near miss doesn't count)
     const v = VEHICLES[car.type];
     const pt = ptype();
-    const touchSide = ((v.w + pt.w * pt.hit) / 2 / ROAD_W) * 0.85;
+    const touchSide = ((v.w + crashWidth(pt)) / 2 / ROAD_W) * 0.85;
     const sameSide = Math.abs(car.x - playerX) < touchSide;
     if (Math.abs(car.x - playerX) < touchSide + 0.06 && now > 0) car.danger = frame;  // it's in my way
 
@@ -3285,8 +3866,9 @@ function drawCrashScreen() {
 
 // Things that keep moving on every screen (unless paused)
 function updateEffects(dt) {
+  updatePlanes(dt);
   updateAtmosphere(dt);
-  const hot = mode !== "home" && currentLocation().name === "Calamba";
+  const hot = mode !== "home" && currentLocation().heat;
   heat += ((hot ? 1 : 0) - heat) * Math.min(1, 0.015 * dt);   // heat fades in and out smoothly
   if (atmo.rain > 0.01) {
     for (const d of drops) {
@@ -3458,6 +4040,7 @@ function drawCar(x, y, w, col) {
 
   // Back of the car
   R(-0.5, -0.385, 1, 0.24, col.body);
+  if (col.design) paintDesign({ R, P, C: () => {} }, col, -0.5, -0.385, 0.5, -0.145);   // stripes or two colors
   R(-0.5, -0.16, 1, 0.02, col.dark);                  // darker lower edge
   R(-0.34, -0.335, 0.68, 0.022, "#8b1024");            // light bar between the lights
   for (const sx of [-0.45, 0.34]) {                   // tail lights with a shine
@@ -3832,8 +4415,7 @@ function drawSports(x, y, w, col) {
   shade(-0.53, -0.345, 1.06, 0.2);
   P(col.dark, [-0.53, -0.21, -0.4, -0.2, -0.38, -0.15, -0.5, -0.15]);   // dark lower corners
   P(col.dark, [0.53, -0.21, 0.4, -0.2, 0.38, -0.15, 0.5, -0.15]);
-  R(-0.07, -0.345, 0.045, 0.195, "rgba(255,255,255,0.85)");   // racing stripes
-  R(0.025, -0.345, 0.045, 0.195, "rgba(255,255,255,0.85)");
+  paintDesign({ R, P, C }, col, -0.5, -0.345, 0.5, -0.15);   // the paint's design (stripes, flames, ...)
   R(-0.47, -0.305, 0.94, 0.03, "#5f0f0f");             // LED light bar
   R(-0.46, -0.298, 0.92, 0.014, "#ff2d2d");
   P("#ff3b30", [-0.5, -0.31, -0.3, -0.31, -0.32, -0.27, -0.5, -0.26]);   // tail lights
@@ -3867,6 +4449,7 @@ function drawElectric(x, y, w, col) {
   tire(R, 0.33, -0.14, 0.15, 0.14);
   R(-0.44, -0.14, 0.88, 0.06, "#1f2937");
   R(-0.5, -0.38, 1, 0.24, col.body);
+  paintDesign({ R, P, C: painter(x, y, w).C }, col, -0.5, -0.38, 0.5, -0.14);   // the paint's design
   shade(-0.5, -0.38, 1, 0.24);
   R(-0.48, -0.338, 0.96, 0.042, "rgba(255,45,85,0.35)");   // glowing light bar
   R(-0.48, -0.33, 0.96, 0.026, "#ff2d55");
@@ -3893,8 +4476,7 @@ function drawMuscle(x, y, w, col) {
     C(ex, -0.06, 0.016, "#1a1a1a");
   }
   R(-0.5, -0.4, 1, 0.2, col.body);
-  R(-0.09, -0.4, 0.05, 0.2, "#ffffff");               // twin stripes
-  R(0.04, -0.4, 0.05, 0.2, "#ffffff");
+  paintDesign({ R, P, C }, col, -0.5, -0.4, 0.5, -0.2);   // the paint's design
   for (const side2 of [-1, 1]) {                      // 3 tail lights per side in chrome
     const bx = side2 < 0 ? -0.48 : 0.25;
     R(bx, -0.37, 0.23, 0.08, "#c0c6cc");
@@ -4737,6 +5319,485 @@ Object.assign(LANDMARKS, {
   }},
 });
 
+// ----- Landmarks: VISAYAS -----
+// A food stall with a striped awning and a big sign on top (used by several places)
+function stall(p, w, wall, stripe, inside) {
+  p.box(-w / 2, w, 1900, 1800, wall, "#d6d0c2", stripe);
+  const n = Math.round(w / 400);
+  for (let i = 0; i < n; i++) p.P(i % 2 ? "#ffffff" : stripe,
+    [-w / 2 - 50 + i * (w + 100) / n, 1900, -w / 2 - 50 + (i + 1) * (w + 100) / n, 1900,
+     -w / 2 - 20 + (i + 1) * (w + 100) / n, 1550, -w / 2 - 20 + i * (w + 100) / n, 1550]);
+  p.R(-w / 2 + 200, 0, w - 400, 1350, inside);
+  p.R(-w / 2 + 200, 750, w - 400, 80, "#a16207");        // counter
+  p.R(-60, 1900, 120, 500, "#475569");                    // pole for the sign
+}
+Object.assign(LANDMARKS, {
+  // SKYWAY: a raised highway crossing high above the road, on big concrete pillars,
+  // with a green sign underneath and cars driving across the top
+  skyway: { w: 9800, draw(p, o) {
+    for (const px of [-3500, 3500]) {                      // the two pillars (outside the road)
+      p.R(px - 280, 0, 560, 3350, "#d4d9e0");
+      p.R(px + 140, 0, 140, 3350, "#a3adb9");             // shaded side
+      p.P("#d4d9e0", [px - 280, 3200, px + 280, 3200, px + 650, 3620, px - 650, 3620]);   // wide top
+    }
+    p.R(-4900, 3600, 9800, 160, "#64748b");               // dark underside
+    p.R(-4900, 3760, 9800, 560, "#e2e8f0");               // the deck
+    for (let i = 0; i < 14; i++) p.R(-4900 + i * 700, 3760, 20, 560, "rgba(100,116,139,0.35)");   // panel lines
+    p.R(-4900, 4180, 9800, 40, "#facc15");
+    p.R(-4900, 4320, 9800, 220, "#cbd5e1");               // side barrier
+    // traffic on top: small cars driving across, both ways
+    const colors = ["#ef4444", "#3b82f6", "#f8fafc", "#facc15", "#22c55e", "#1f2937"];
+    for (let i = 0; i < 4; i++) {
+      const dir = i % 2 ? 1 : -1;
+      const cx = ((((frame * 28 * dir + i * 2900 + o.variant * 9000) % 11000) + 11000) % 11000) - 5500;
+      if (Math.abs(cx) > 4500) continue;
+      const c = colors[(i + Math.floor(o.variant * 6)) % colors.length];
+      const big = i === 3;                                // one bus
+      p.R(cx - (big ? 700 : 420), 4540, big ? 1400 : 840, big ? 520 : 240, c);
+      if (!big) p.R(cx - 230 + dir * 40, 4780, 460, 170, c);
+      p.R(cx - (big ? 600 : 180) + dir * 30, big ? 4800 : 4790, big ? 1200 : 360, big ? 160 : 120, "#1e293b");   // windows
+      p.C(cx - (big ? 450 : 260), 4550, 90, "#111111");
+      p.C(cx + (big ? 450 : 260), 4550, 90, "#111111");
+    }
+    for (const lx of [-3600, -1200, 1200, 3600]) {         // lamp posts with lamps that glow at night
+      p.R(lx - 35, 4540, 70, 1000, "#64748b");
+      p.R(lx - 35, 5490, 380, 60, "#64748b");
+      p.C(lx + 320, 5460, 150, `rgba(253,224,71,${0.25 + darkness() * 0.75})`);
+    }
+    p.R(-1400, 2850, 2800, 700, "#15803d");               // big green road sign hanging below
+    p.R(-1400, 2850, 2800, 50, "#ffffff");
+    p.R(-1400, 3500, 2800, 50, "#ffffff");
+    p.R(-1000, 3550, 80, 60, "#94a3b8");
+    p.R(920, 3550, 80, 60, "#94a3b8");
+    p.T("SKYWAY ↑", 0, 3200, 360, "#ffffff");
+  }},
+  // Cebu: Magellan's Cross in its little octagon pavilion with a painted ceiling
+  magellan: { w: 4600, draw(p) {
+    p.R(-2300, 0, 4600, 250, "#d6d3d1");                    // steps
+    p.box(-1900, 3800, 2600, 1600, "#f5f0e6", "#ddd5c4", null, 250);
+    for (const ax of [-1600, -500, 600]) { p.R(ax, 250, 900, 1900, "#5b4636"); p.C(ax + 450, 2150, 450, "#5b4636"); }   // arches
+    p.P("#9a3412", [-2200, 2850, 2200, 2850, 1300, 3900, -1300, 3900]);    // red tile roof (8 sides seen from the front)
+    p.P("#7c2d12", [-1300, 3900, 1300, 3900, 700, 4500, -700, 4500]);
+    p.C(0, 4600, 160, "#f5f0e6");
+    p.R(-90, 600, 180, 2100, "#3b2516");                    // the big wooden cross inside
+    p.R(-500, 2000, 1000, 170, "#3b2516");
+    p.C(0, 2700, 380, "rgba(253,224,71,0.25)");
+  }},
+  // Cebu: Basilica del Santo Niño (stone front, bell tower on one side)
+  santonino: { w: 6200, draw(p) {
+    const stone = "#e7dcc4", shade = "#cbbd9f";
+    p.box(-2400, 4000, 3600, 2600, stone, shade, null);
+    p.P(stone, [-2400, 3600, 0, 4600, 1600, 3600]);
+    p.box(1600, 1400, 5600, 1200, "#efe5ce", shade, null);   // bell tower
+    p.R(1600, 5600, 1400, 120, "#ffffff");
+    p.P("#9a3412", [1500, 5720, 3100, 5720, 2300, 6600]);
+    p.R(2050, 4200, 500, 900, "#3b2f24"); p.C(2300, 5100, 250, "#3b2f24");   // bell window
+    p.C(2300, 4750, 180, "#d4a017");
+    p.R(-700, 0, 1400, 2000, "#5b3a22"); p.C(0, 2000, 700, "#5b3a22");      // main door
+    for (const wx of [-1900, 900]) { p.R(wx, 1800, 450, 900, "#3b2f24"); p.C(wx + 225, 2700, 225, "#3b2f24"); }
+    p.C(0, 3200, 300, "#3b2f24");
+    p.R(-120, 4500, 240, 500, "#d4a017"); p.R(-280, 4700, 560, 110, "#d4a017");   // cross on top
+    for (let i = 1; i < 8; i++) p.R(-2400, i * 450, 4000, 25, "rgba(120,90,50,0.18)");
+  }},
+  // Cebu lechon: a whole roast pig turning on a bamboo spit over coals
+  lechon: { w: 3400, draw(p) {
+    stall(p, 3000, "#fff7ed", "#b45309", "#3f2a1a");
+    p.R(-1100, 900, 2200, 120, "#e8c07a");                  // bamboo spit
+    p.E(0, 1150, 900, 330, "#a5521f");                       // the crispy pig
+    p.E(0, 1250, 700, 160, "#c2692f");
+    p.E(900, 1100, 200, 170, "#a5521f");                     // head
+    p.C(1030, 1130, 40, "#1f1f1f");
+    p.C(1120, 1060, 60, "#dc2626");                           // apple in the mouth
+    p.R(-900, 780, 1800, 60, "#ef4444");                     // hot coals
+    for (let i = 0; i < 6; i++) p.C(-750 + i * 300, 820, 50, i % 2 ? "#facc15" : "#f97316");
+    p.E(0, 2700, 900, 450, "#a5521f");                       // pig sign
+    p.E(0, 2780, 650, 230, "#c2692f");
+    p.E(820, 2650, 220, 200, "#a5521f");
+    p.C(950, 2700, 45, "#1f1f1f");
+  }},
+  // Bohol: a giant tarsier statue (tiny primate, HUGE eyes) on a branch
+  tarsier: { w: 3600, draw(p) {
+    p.R(-1600, 0, 3200, 500, "#78716c");                     // stone base
+    p.R(-1500, 500, 3000, 120, "#a8a29e");
+    p.curve("#5b3a22", 260, [-1500, 900, -500, 1100, 500, 1000, 1500, 1200]);   // branch
+    p.E(0, 1900, 800, 1000, "#a1806a");                      // body
+    p.E(-650, 1150, 260, 160, "#a1806a");                     // long fingers on the branch
+    p.E(650, 1150, 260, 160, "#a1806a");
+    p.C(0, 3300, 900, "#b08e78");                             // big round head
+    p.E(-850, 3900, 260, 380, "#b08e78");                     // ears
+    p.E(850, 3900, 260, 380, "#b08e78");
+    p.E(-850, 3900, 140, 230, "#e7b9a5");
+    p.E(850, 3900, 140, 230, "#e7b9a5");
+    for (const ex of [-400, 400]) {                          // HUGE eyes
+      p.C(ex, 3350, 420, "#fef3c7");
+      p.C(ex, 3350, 330, "#d97706");
+      p.C(ex, 3350, 210, "#111111");
+      p.C(ex - 80, 3440, 70, "#ffffff");
+    }
+    p.C(0, 2950, 60, "#5b3a22");                              // tiny nose
+    p.curve("#a1806a", 120, [600, 1200, 1400, 900, 1700, 600, 1500, 200]);   // thin tail
+  }},
+  // Bohol: Loboc River with a floating restaurant raft (bamboo, with a roof)
+  loboc: { w: 6400, draw(p) {
+    p.E(0, 250, 3200, 380, "#3f9a7a");                       // green river
+    p.E(-600, 300, 1400, 80, "rgba(255,255,255,0.35)");
+    const bob = Math.sin(frame * 0.05) * 40;
+    p.R(-2200, 300 + bob, 4400, 250, "#d9b26f");             // bamboo raft
+    for (let i = 0; i < 12; i++) p.R(-2200 + i * 370, 300 + bob, 30, 250, "#b8904f");
+    for (const px of [-2000, -700, 700, 2000]) p.R(px - 50, 550 + bob, 100, 1300, "#8a6a3e");   // posts
+    p.P("#7c4a1e", [-2500, 1850 + bob, 2500, 1850 + bob, 1900, 2500 + bob, -1900, 2500 + bob]);   // nipa roof
+    for (let i = 0; i < 10; i++) p.R(-2400 + i * 500, 1850 + bob, 30, 600, "#5b3a1e");
+    for (const tx of [-1200, 0, 1200]) {                     // tables with diners
+      p.R(tx - 300, 900 + bob, 600, 60, "#ffffff");
+      p.C(tx - 200, 1250 + bob, 120, "#8d5a3b"); p.R(tx - 320, 950 + bob, 240, 250, "#38bdf8");
+      p.C(tx + 220, 1250 + bob, 120, "#7a5c45"); p.R(tx + 100, 950 + bob, 240, 250, "#f472b6");
+    }
+    for (const tx of [-3000, 3000]) {                        // jungle palms on the banks
+      p.R(tx - 60, 0, 120, 3000, "#6b4f2a");
+      for (const a of [-2.6, -2.0, -1.2, -0.5]) p.E(tx + Math.cos(a) * 700, 3000 + Math.sin(a) * 250, 750, 170, "#3f8f4a");
+    }
+  }},
+  // Bohol: Baclayon Church, one of the oldest stone churches (coral stone, square bell tower)
+  baclayon: { w: 6400, draw(p) {
+    const stone = "#c4b08a", dark = "#a08b64";
+    p.box(-2600, 3600, 3000, 2600, stone, dark, null);
+    p.P(stone, [-2600, 3000, -1600, 3800, 0, 4100, 1000, 3000]);
+    p.box(1000, 1800, 4800, 1400, "#b9a37c", dark, null);    // big square bell tower
+    for (let i = 1; i < 4; i++) p.R(1000, i * 1200, 1800, 80, "#a08b64");
+    p.R(1650, 3700, 500, 800, "#3b2f24"); p.C(1900, 4500, 250, "#3b2f24");
+    p.P("#78716c", [900, 4800, 2900, 4800, 1900, 5700]);
+    p.R(-1500, 0, 1300, 1800, "#4a3520"); p.C(-850, 1800, 650, "#4a3520");   // big arched porch
+    for (const bx of [-2600, -200]) p.P(dark, [bx, 0, bx + 400, 0, bx + 400, 2200, bx, 2400]);   // buttresses
+    for (let i = 0; i < 20; i++) p.C(-2400 + i * 230, 2900 + Math.sin(i) * 120, 60, "rgba(74,124,60,0.55)");   // moss
+  }},
+  // Iloilo: Miagao Church, a fortress church with a carved coconut-tree front
+  miagao: { w: 7600, draw(p) {
+    const stone = "#e0c58f", dark = "#c4a46c";
+    p.box(-2200, 4400, 3400, 2400, stone, dark, null);
+    p.P(stone, [-2200, 3400, -1400, 3900, 0, 4700, 1400, 3900, 2200, 3400]);
+    for (const tx of [-3800, 2200]) {                       // two different towers (one taller)
+      const th = tx < 0 ? 4600 : 5600;
+      p.box(tx, 1600, th, 1200, "#d8bb83", dark, null);
+      for (let i = 1; i < 4; i++) p.R(tx, (th / 4) * i, 1600, 70, dark);
+      p.R(tx + 550, th - 1300, 500, 700, "#4a3520");
+      p.P(stone, [tx - 100, th, tx + 1700, th, tx + 800, th + 500]);
+    }
+    p.R(-600, 0, 1200, 1700, "#4a3520"); p.C(0, 1700, 600, "#4a3520");
+    // the famous carving: a big coconut tree in the middle of the front
+    p.R(-60, 2100, 120, 1500, "#9a7a46");
+    for (const a of [-2.7, -2.2, -1.6, -1.0, -0.5]) p.E(Math.cos(a) * 500, 3600 + Math.sin(a) * 200, 520, 120, "#b8955a");
+    p.C(-700, 2600, 220, "#b8955a"); p.C(700, 2600, 220, "#b8955a");   // little carved figures
+    for (let i = 1; i < 7; i++) p.R(-2200, i * 480, 4400, 25, "rgba(120,90,40,0.2)");
+  }},
+  // Iloilo: La Paz batchoy stall (a giant noodle bowl sign)
+  batchoy: { w: 3200, draw(p) {
+    stall(p, 2800, "#fffbeb", "#dc2626", "#3f2a1a");
+    for (const bx of [-700, 700]) { p.E(bx, 900, 260, 110, "#f8fafc"); p.E(bx, 950, 200, 60, "#d97706"); }
+    p.P("#f8fafc", [-900, 2500, 900, 2500, 650, 2050, -650, 2050]);   // the bowl
+    p.R(-900, 2450, 1800, 100, "#dc2626");
+    p.E(0, 2520, 880, 120, "#f59e0b");                        // soup
+    p.curve("#fde68a", 60, [-500, 2560, -200, 2700, 100, 2560, 400, 2700]);   // noodles
+    p.C(-300, 2600, 90, "#7c2d12"); p.C(250, 2620, 80, "#a3e635");   // meat and green onions
+    p.curve("#ffffff", 50, [-300, 2700, -200, 2950, -400, 3150, -300, 3350]);   // steam
+    p.curve("#ffffff", 50, [300, 2700, 400, 2950, 200, 3150, 300, 3350]);
+    p.R(-900, 2600, 120, 900, "#78350f"); p.R(-700, 2600, 120, 900, "#78350f");   // chopsticks
+  }},
+  // Bacolod: a giant smiling MassKara festival mask on a stage
+  masskara: { w: 5200, draw(p, o) {
+    p.box(-2300, 4600, 600, 1400, "#7c3aed", "#5b21b6", "#a78bfa");   // stage
+    const bulbs = ["#facc15", "#f472b6", "#22d3ee", "#4ade80"];
+    for (let i = 0; i < 12; i++) p.C(-2200 + i * 400, 650, 70, bulbs[(i + Math.floor(frame / 12)) % 4]);
+    p.R(-80, 600, 160, 900, "#475569");
+    const tint = ["#facc15", "#22d3ee", "#f472b6"][Math.floor(o.variant * 3)];
+    for (let i = 0; i < 9; i++) {                            // feathers fanning out
+      const a = Math.PI * (0.15 + i * 0.0875);
+      p.E(Math.cos(a) * 1500, 3300 + Math.sin(a) * 1500, 260, 700, ["#ef4444", "#facc15", "#22c55e", "#3b82f6", "#a855f7"][i % 5]);
+    }
+    p.E(0, 2800, 1500, 1300, tint);                           // the mask face
+    p.E(0, 2800, 1300, 1100, "#ffffff");
+    for (const ex of [-550, 550]) { p.E(ex, 3100, 330, 220, tint); p.E(ex, 3100, 180, 120, "#111111"); }
+    p.curve("#dc2626", 200, [-800, 2400, -300, 1900, 300, 1900, 800, 2400]);   // BIG smile
+    p.C(-950, 2500, 150, "#f9a8d4"); p.C(950, 2500, 150, "#f9a8d4");
+    for (let i = 0; i < 10; i++) p.C(-1200 + i * 270, 3800 + Math.sin(i) * 100, 70, "#facc15");   // sparkly gems
+  }},
+  // Bacolod: The Ruins, the skeleton of an old mansion with tall columns
+  ruins: { w: 7000, draw(p) {
+    p.R(-3300, 0, 6600, 300, "#a8a29e");
+    const wall = "#cfc6b4", dark = "#a89f8c";
+    p.box(-3000, 6000, 2600, 1400, "rgba(207,198,180,0.95)", dark, null, 300);
+    for (let i = 0; i < 6; i++) {                             // empty arched windows (you can see the sky)
+      const wx = -2700 + i * 950;
+      p.R(wx, 900, 600, 1300, "#9fc5e8");
+      p.C(wx + 300, 2200, 300, "#9fc5e8");
+    }
+    for (const cx of [-3000, -1800, -600, 600, 1800, 2950]) p.R(cx, 300, 280, 3200, wall);   // tall columns
+    p.R(-3100, 3500, 6200, 300, "#bfb6a3");
+    p.P("rgba(207,198,180,0.9)", [-1500, 3800, 0, 4600, 1500, 3800]);
+    for (let i = 0; i < 14; i++) p.C(-3000 + i * 460, 3700 + (i % 3) * 120, 140, "rgba(74,124,60,0.6)");   // vines
+    p.R(-400, 0, 800, 1600, "#4a3d2c");
+  }},
+  // Bacolod: chicken inasal stall with a smoky grill
+  inasal: { w: 3400, draw(p) {
+    stall(p, 3000, "#fff7ed", "#ea580c", "#2a1d12");
+    p.R(-1000, 800, 2000, 100, "#1f2937");                   // grill
+    for (let i = 0; i < 5; i++) {                            // chicken on sticks (orange from annatto)
+      p.R(-850 + i * 400, 900, 40, 500, "#d6b26b");
+      p.E(-830 + i * 400, 1150, 140, 180, "#ea580c");
+    }
+    for (const sx of [-500, 300]) {
+      const w = Math.sin(frame * 0.1 + sx) * 80;
+      p.curve("rgba(220,220,220,0.7)", 90, [sx, 1400, sx + 150 + w, 1700, sx - 100 - w, 2000, sx + w, 2300]);
+    }
+    p.E(0, 2800, 700, 500, "#ea580c");                       // drumstick sign
+    p.R(500, 2650, 600, 250, "#f8fafc");
+    p.C(1150, 2650, 140, "#f8fafc"); p.C(1150, 2900, 140, "#f8fafc");
+  }},
+  // Boracay: a paraw sailboat on the white sand (big colorful sail, bamboo outriggers)
+  paraw: { w: 5600, draw(p, o) {
+    p.E(0, 120, 2800, 200, "#f5ecd7");                       // sand
+    const c = ["#ef4444", "#22c55e", "#3b82f6", "#f97316"][Math.floor(o.variant * 4)];
+    p.P("#8a5a2b", [-1800, 300, 1800, 300, 1500, 700, -1500, 700]);   // hull
+    p.R(-1500, 650, 3000, 80, "#f8fafc");
+    p.curve("#c8a46a", 80, [-2600, 400, -1400, 900, 1400, 900, 2600, 400]);   // outriggers
+    p.R(-40, 700, 80, 4300, "#5b3a1e");                       // mast
+    p.P(c, [0, 5000, 2300, 900, 60, 900]);                    // big sail
+    p.P("rgba(255,255,255,0.35)", [60, 4200, 1300, 1600, 60, 1600]);
+    p.P("#facc15", [0, 4600, -1300, 1100, -60, 1100]);        // small sail
+  }},
+  // Boracay: Willy's Rock, a rock in the water with a little statue on top
+  willys: { w: 5000, draw(p) {
+    p.E(0, 200, 2500, 300, "#5eead4");                       // shallow turquoise water
+    p.E(-600, 260, 900, 60, "rgba(255,255,255,0.5)");
+    p.P("#6b6157", [-1800, 200, -1500, 1600, -900, 2500, 0, 2900, 800, 2600, 1500, 1800, 1800, 200]);   // the rock
+    p.P("#8a8076", [-1500, 1600, -900, 2500, 0, 2900, -200, 1700]);
+    for (let i = 0; i < 8; i++) p.C(-1200 + i * 350, 2200 + Math.sin(i * 2) * 400, 140, "rgba(74,124,60,0.7)");   // little plants
+    p.R(-300, 2900, 600, 250, "#e5e7eb");                     // grotto base
+    p.P("#ffffff", [-180, 3150, 180, 3150, 120, 3800, -120, 3800]);   // white statue
+    p.C(0, 3900, 120, "#ffffff");
+    p.P("#93c5fd", [-200, 3500, 200, 3500, 150, 3800, -150, 3800]);
+    p.R(-60, 3150, 120, 100, "#facc15");
+  }},
+  // Boracay: bamboo beach bar with a thatched roof, coconuts and torches
+  beachbar: { w: 3800, draw(p) {
+    p.E(0, 100, 1900, 160, "#f5ecd7");
+    for (const px of [-1500, 1400]) p.R(px, 0, 120, 2100, "#c8a46a");
+    p.R(-1500, 700, 3000, 900, "#d9b26f");                   // bamboo counter
+    for (let i = 0; i < 14; i++) p.R(-1500 + i * 215, 700, 25, 900, "#b8904f");
+    p.P("#a16207", [-2100, 2000, 2100, 2000, 1200, 3000, -1200, 3000]);   // thatched roof
+    for (let i = 0; i < 16; i++) p.R(-2000 + i * 250, 1800, 40, 260, "#92400e");
+    for (const cx of [-900, -300, 400]) {                    // coconut drinks with straws
+      p.C(cx, 1750, 180, "#6b4f2a");
+      p.R(cx + 40, 1850, 30, 300, "#f472b6");
+    }
+    for (const tx of [-1900, 1900]) {                        // tiki torches
+      p.R(tx - 40, 0, 80, 1900, "#5b3a1e");
+      const fl = 1 + Math.sin(frame * 0.5 + tx) * 0.15;
+      p.P("#f97316", [tx - 120, 1900, tx + 120, 1900, tx, 1900 + 400 * fl]);
+      p.P("#facc15", [tx - 60, 1900, tx + 60, 1900, tx, 1900 + 230 * fl]);
+    }
+  }},
+  // Small Chocolate Hill beside the road (Bohol)
+  chochill: { w: 4200, draw(p, o) {
+    const h = 1700 + o.variant * 900, pts = [];
+    for (let i = 0; i <= 16; i++) {                  // a dome: the top half of an oval
+      const a = Math.PI - (i / 16) * Math.PI;
+      pts.push(Math.cos(a) * 2000, Math.sin(a) * h);
+    }
+    p.P(o.variant > 0.5 ? "#9a7848" : "#8f8a52", pts);
+    p.E(-500, h * 0.55, 700, h * 0.25, "rgba(255,240,200,0.22)");
+  }},
+  // A patch of tall sugarcane (Bacolod)
+  cane: { w: 3000, draw(p, o) {
+    for (let i = 0; i < 22; i++) {
+      const x = -1400 + i * 135, h = 2200 + ((i * 37 + o.variant * 100) % 9) * 120;
+      p.R(x, 0, 50, h, i % 2 ? "#5aa83c" : "#4d9a34");
+      p.P("#6cc04a", [x, h, x + 450, h - 300, x + 40, h - 150]);
+      p.P("#4d9a34", [x + 50, h - 200, x - 400, h - 500, x, h - 380]);
+    }
+  }},
+
+  // ----- Landmarks: MINDANAO -----
+  // Cagayan de Oro: whitewater rafting (a raft with paddlers going down rapids)
+  rafting: { w: 6000, draw(p) {
+    p.E(0, 300, 3000, 420, "#5b9bbf");                        // river
+    for (let i = 0; i < 9; i++) p.E(-2400 + i * 600, 380 + (i % 2) * 80, 300, 70, "rgba(255,255,255,0.75)");   // white water
+    for (const rx of [-2900, 2900]) p.P("#57534e", [rx - 600, 0, rx + 600, 0, rx + 300, 1800, rx - 400, 1400]);   // rocks
+    const bob = Math.sin(frame * 0.12) * 80, tip = Math.sin(frame * 0.08) * 0.15;
+    p.E(0, 650 + bob, 1500, 330, "#f97316");                  // orange raft
+    p.E(0, 700 + bob, 1250, 200, "#c2410c");
+    const helmets = ["#ef4444", "#facc15", "#3b82f6", "#22c55e"];
+    for (let i = 0; i < 4; i++) {                             // paddlers with helmets and life vests
+      const px = -900 + i * 600;
+      p.R(px - 150, 750 + bob, 300, 450, "#f97316");
+      p.C(px, 1350 + bob, 140, "#8d5a3b");
+      p.E(px, 1430 + bob, 170, 90, helmets[i]);
+      p.curve("#facc15", 60, [px + 150, 1100 + bob, px + 400, 800 + bob + tip * 400, px + 550, 500 + bob, px + 650, 300 + bob]);
+    }
+  }},
+  // Cagayan de Oro / Bukidnon: a zipline tower with someone flying down the cable
+  zipline: { w: 4400, draw(p) {
+    p.R(-1600, 0, 180, 4600, "#8a6a3e");                      // wooden tower
+    p.R(-900, 0, 180, 4600, "#8a6a3e");
+    for (let i = 1; i < 6; i++) p.R(-1600, i * 750, 880, 80, "#a07a45");
+    p.box(-1700, 1000, 300, 900, "#a07a45", "#8a6a3e", "#7c4a1e", 4600);   // platform
+    p.curve("#1f2937", 40, [-1200, 4800, 0, 3900, 1200, 3000, 2200, 2400]);   // cable
+    const t = (frame * 0.004) % 1;                            // the rider slides down and starts again
+    const rx = -1200 + t * 3400, ry = 4800 - t * 2400;
+    p.R(rx - 20, ry - 400, 40, 400, "#475569");
+    p.R(rx - 200, ry - 1000, 400, 600, "#ef4444");
+    p.C(rx, ry - 280, 150, "#8d5a3b");
+    p.R(rx - 400, ry - 850, 300, 80, "#ef4444");             // arms out: wheee!
+    p.R(rx + 100, ry - 850, 300, 80, "#ef4444");
+  }},
+  // Bukidnon: a pineapple plantation with rows of pineapples and a truck full of them
+  pineapples: { w: 6400, draw(p) {
+    for (let row = 3; row >= 0; row--) {
+      for (let i = 0; i < 16; i++) {
+        const px = -3000 + i * 400 + (row % 2) * 200, py = row * 140;
+        p.P("#4d7c5f", [px - 200, py, px + 200, py, px, py + 420]);       // spiky leaves
+        p.P("#6b9a7c", [px - 60, py, px + 260, py + 320, px + 60, py]);
+        if ((i + row) % 3 === 0) { p.E(px, py + 300, 90, 130, "#eab308"); p.P("#4d7c5f", [px - 70, py + 410, px + 70, py + 410, px, py + 620]); }
+      }
+    }
+    p.box(1200, 2400, 1200, 1300, "#facc15", "#ca8a04", null, 700);   // truck box full of pineapples
+    for (let i = 0; i < 9; i++) p.E(1400 + i * 240, 2000 + (i % 2) * 120, 110, 150, "#eab308");
+    p.box(3600, 900, 1500, 1100, "#16a34a", "#15803d", null, 500);    // truck cab
+    p.R(3800, 1300, 500, 450, "#bfe3f5");
+    for (const wx of [1600, 3100, 4100]) { p.C(wx, 400, 330, "#111111"); p.C(wx, 400, 150, "#9ca3af"); }
+  }},
+  // Bukidnon: a cattle ranch fence with cows and a cowboy on a horse
+  ranch: { w: 6000, draw(p) {
+    for (let i = 0; i < 9; i++) p.R(-2900 + i * 720, 0, 120, 1300, "#8a6a3e");   // fence
+    p.R(-2900, 900, 5800, 100, "#a07a45"); p.R(-2900, 450, 5800, 100, "#a07a45");
+    for (const [cx, spots] of [[-1500, "#1f1f1f"], [300, "#78350f"]]) {   // cows
+      p.E(cx, 1500, 750, 420, "#f5f5f4");
+      p.C(cx - 250, 1600, 180, spots); p.C(cx + 300, 1450, 140, spots);
+      p.E(cx + 820, 1700, 240, 200, "#f5f5f4");
+      p.E(cx + 980, 1650, 90, 70, "#fda4af");
+      for (const lx of [-450, -150, 200, 500]) p.R(cx + lx, 1000, 110, 450, "#e7e5e4");
+    }
+    p.E(2000, 1900, 800, 400, "#7c4a1e");                     // horse
+    p.E(2800, 2400, 260, 420, "#7c4a1e");
+    p.E(3000, 2750, 280, 180, "#7c4a1e");
+    for (const lx of [1500, 1800, 2200, 2450]) p.R(lx, 1100, 110, 600, "#6b3e18");
+    p.R(1850, 2200, 300, 700, "#2563eb");                     // cowboy
+    p.C(2000, 3050, 160, "#8d5a3b");
+    p.E(2000, 3200, 400, 80, "#a16207"); p.R(1830, 3200, 340, 220, "#a16207");   // cowboy hat
+  }},
+  // Bukidnon: Monastery of the Transfiguration (a chapel shaped like a tall pyramid)
+  monastery: { w: 5600, draw(p) {
+    p.R(-2600, 0, 5200, 500, "#d6d3d1");
+    p.P("#e7e5e4", [-2400, 500, 2400, 500, 0, 5600]);          // pyramid-shaped roof
+    p.P("#cfcac4", [0, 500, 2400, 500, 0, 5600]);
+    for (let i = 1; i < 6; i++) p.R(-2400 + i * 400, 500 + i * 850, 4800 - i * 800, 40, "rgba(120,110,100,0.35)");
+    p.R(-500, 500, 1000, 1700, "#5b4636");                     // entrance
+    p.P("#bfe3f5", [-300, 2600, 300, 2600, 0, 3900]);          // tall window
+    p.R(-60, 5600, 120, 700, "#78716c"); p.R(-250, 6000, 500, 100, "#78716c");   // cross on top
+  }},
+  // Davao: a giant Philippine Eagle statue (the national bird) on a pedestal
+  eagle: { w: 5200, draw(p) {
+    p.box(-1200, 2400, 1400, 1200, "#a8a29e", "#8a847e", "#cbd5e1");   // pedestal
+    p.E(0, 2700, 900, 1200, "#6b4423");                        // body
+    p.E(0, 2400, 600, 800, "#f5f0e6");                         // white chest
+    for (const s of [-1, 1]) {                                 // wings spread wide
+      p.P("#5a3a1e", [s * 600, 3300, s * 2600, 4400, s * 2500, 3000, s * 1900, 2400, s * 800, 2300]);
+      for (let i = 0; i < 5; i++) p.P("#3f2a14", [s * (1400 + i * 240), 2600 + i * 120, s * (1600 + i * 240), 2300 + i * 120, s * (1700 + i * 240), 2700 + i * 160]);
+    }
+    p.C(0, 4100, 520, "#f5f0e6");                              // head
+    for (let i = 0; i < 9; i++) p.P(i % 2 ? "#8a5a2b" : "#a0713c", [-500 + i * 120, 4400, -400 + i * 120, 4400, -440 + i * 120, 4950]);   // shaggy crest
+    p.C(180, 4150, 90, "#1e3a8a"); p.C(190, 4150, 40, "#111111");   // sharp blue-grey eye
+    p.P("#475569", [350, 4150, 900, 3900, 450, 3800]);           // big curved beak
+    p.P("#facc15", [400, 1500, 600, 1500, 500, 1400]);           // feet
+  }},
+  // Davao: a durian fruit stand (spiky, smelly, delicious) with a giant durian sign
+  durian: { w: 3400, draw(p) {
+    stall(p, 3000, "#f7fee7", "#65a30d", "#2a1d12");
+    for (const dx of [-900, -300, 300, 900]) {                 // durians on the counter
+      p.E(dx, 1050, 240, 280, "#a3a33a");
+      for (let i = 0; i < 6; i++) p.P("#6b7a20", [dx - 200 + i * 80, 1100 + (i % 2) * 80, dx - 160 + i * 80, 1100, dx - 180 + i * 80, 1260]);
+    }
+    p.E(0, 2800, 800, 900, "#a3a33a");                         // giant durian sign
+    for (let r = 0; r < 5; r++) for (let i = 0; i < 6; i++) {
+      const sx = -550 + i * 220, sy = 2200 + r * 260;
+      p.P("#6b7a20", [sx - 70, sy, sx + 70, sy, sx, sy + 170]);
+    }
+    p.P("#65a30d", [-100, 3700, 100, 3700, 60, 4100, -60, 4100]);
+    p.E(500, 2600, 200, 300, "#fde047");                       // it's open: yellow fruit inside
+  }},
+  // General Santos: a giant tuna statue (Tuna Capital of the Philippines)
+  tuna: { w: 6000, draw(p) {
+    p.box(-1500, 3000, 900, 1200, "#64748b", "#475569", "#94a3b8");   // base
+    const sw = Math.sin(frame * 0.06) * 120;                   // the tail swishes a little
+    p.E(0, 2600, 2300, 900, "#1e3a8a");                         // dark blue back
+    p.E(0, 2300, 2100, 600, "#cbd5e1");                         // silver belly
+    p.P("#1e3a8a", [2000, 2600, 3000, 3600 + sw, 2600, 2600, 3000, 1600 - sw]);   // tail
+    p.P("#facc15", [-300, 3400, 400, 3400, 0, 4200]);           // yellow fins
+    p.P("#facc15", [-200, 1900, 400, 1900, 100, 1300]);
+    for (let i = 0; i < 6; i++) p.P("#facc15", [900 + i * 180, 3300, 1000 + i * 180, 3300, 950 + i * 180, 3550]);
+    p.C(-1600, 2700, 170, "#ffffff"); p.C(-1600, 2700, 90, "#111111");   // eye
+    p.P("#0f172a", [-2300, 2500, -1900, 2450, -2250, 2350]);    // mouth
+  }},
+  // General Santos: the fish port with boats, crates of fish and an ice house
+  fishport: { w: 6800, draw(p) {
+    p.R(-3400, 0, 6800, 400, "#9ca3af");                       // concrete pier
+    p.box(-3200, 2600, 2400, 1600, "#e2e8f0", "#cbd5e1", "#3b82f6", 400);   // ice house
+    p.R(-2600, 400, 1200, 1500, "#1e3a8a");
+    p.R(-3200, 2500, 2600, 250, "#3b82f6");
+    for (let i = 0; i < 6; i++) {                              // crates of fish
+      const cx = 200 + (i % 3) * 700, cy = 400 + Math.floor(i / 3) * 450;
+      p.R(cx, cy, 600, 420, "#2563eb");
+      for (let k = 0; k < 3; k++) p.E(cx + 150 + k * 150, cy + 380, 90, 50, "#cbd5e1");
+    }
+    p.P("#f8fafc", [500, 1500, 3300, 1500, 3000, 2000, 800, 2000]);   // a banca boat behind
+    p.R(1400, 2000, 900, 600, "#ef4444");
+    p.curve("#3f3f46", 50, [0, 1450, 1200, 1350, 2600, 1350, 3800, 1450]);
+  }},
+  // Zamboanga: Fort Pilar, an old Spanish fort with a shrine on its wall
+  fortpilar: { w: 7600, draw(p) {
+    const stone = "#b8a27c", dark = "#9a855f";
+    p.box(-3600, 7200, 2800, 1600, stone, dark, null);
+    for (let i = 0; i < 13; i++) p.R(-3600 + i * 560, 2800, 300, 350, stone);   // battlements
+    for (let i = 1; i < 7; i++) p.R(-3600, i * 400, 7200, 25, "rgba(80,60,30,0.25)");
+    p.R(-900, 300, 1800, 2200, "#e7dcc4");                     // the shrine
+    p.P("#e7dcc4", [-1100, 2500, 1100, 2500, 0, 3400]);
+    p.R(-450, 700, 900, 1300, "#1e3a8a");
+    p.P("#93c5fd", [-200, 900, 200, 900, 150, 1800, -150, 1800]);   // statue of the Virgin
+    p.C(0, 1900, 120, "#fde68a");
+    for (let i = 0; i < 9; i++) p.C(-700 + i * 175, 380, 60, `rgba(253,224,71,${0.5 + 0.5 * Math.sin(frame * 0.2 + i)})`);   // candles
+    p.R(-3300, 0, 1200, 1800, "#5b4636"); p.C(-2700, 1800, 600, "#5b4636");   // fort gate
+    for (let i = 0; i < 10; i++) p.C(-3400 + i * 700, 2700 + Math.sin(i) * 150, 160, "rgba(74,124,60,0.55)");
+  }},
+  // Zamboanga: a vinta boat with its striped sail (very colorful!)
+  vinta: { w: 4800, draw(p, o) {
+    p.E(0, 120, 2400, 200, "#e9d8a6");
+    const sets = [["#ef4444", "#facc15", "#22c55e", "#3b82f6", "#f97316"], ["#a855f7", "#facc15", "#ec4899", "#22c55e", "#3b82f6"]];
+    const cols = sets[Math.floor(o.variant * 2)];
+    p.P("#7c4a1e", [-2000, 300, 2000, 300, 1700, 650, -1700, 650]);   // hull
+    for (let i = 0; i < 8; i++) p.R(-1600 + i * 420, 450, 200, 100, cols[i % 5]);   // painted pattern on the hull
+    p.curve("#c8a46a", 70, [-2400, 400, -1400, 800, 1400, 800, 2400, 400]);   // outriggers
+    p.R(-40, 650, 80, 4200, "#5b3a1e");                         // mast
+    for (let i = 0; i < 5; i++) p.R(0, 1100 + i * 700, 2200 - i * 120, 700, cols[i]);   // striped sail
+    p.R(0, 4600, 2000, 60, "#5b3a1e");
+  }},
+});
+
+// Rainforest tree beside the road (Mindanao): tall trunk, wide leafy crown
+function drawJungleTree(x, y, size) {
+  const h = size * 1.2;
+  ctx.fillStyle = "#5b3a22";
+  ctx.fillRect(x - h * 0.035, y - h * 0.6, h * 0.07, h * 0.6);
+  ctx.strokeStyle = "#5b3a22";                         // roots
+  ctx.lineWidth = Math.max(1, h * 0.03);
+  ctx.beginPath(); ctx.moveTo(x, y - h * 0.15); ctx.lineTo(x - h * 0.12, y); ctx.moveTo(x, y - h * 0.15); ctx.lineTo(x + h * 0.12, y); ctx.stroke();
+  for (const [dx, dy, r, c] of [[-0.18, 0.62, 0.2, "#1f5e3a"], [0.18, 0.64, 0.2, "#245f3c"], [0, 0.78, 0.24, "#2c7048"],
+    [-0.1, 0.9, 0.16, "#3a8050"], [0.12, 0.88, 0.15, "#2c7048"]]) {
+    ctx.fillStyle = c;
+    ctx.beginPath(); ctx.arc(x + dx * h, y - dy * h, r * h, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.beginPath(); ctx.arc(x - 0.08 * h, y - 0.86 * h, 0.08 * h, 0, Math.PI * 2); ctx.fill();
+}
+
 // A pine tree drawn with the landmark painter (layers of dark green triangles)
 function drawPine(p, x, h) {
   p.R(x - 70, 0, 140, h * 0.25, "#5b3a22");
@@ -5391,11 +6452,78 @@ function drawPara(sx, sy, w) {
 
 // Draws the road, scenery and every vehicle. Returns the list of vehicle
 // positions so their lights can glow at night.
+// ----- AIRPLANES (Manila, Cebu City and Davao have big airports) -----
+let planes = [];
+let planeTimer = 60;
+function updatePlanes(dt) {
+  const loc = mode === "home" ? LOCATIONS[0] : currentLocation();
+  if (loc.planes && (planeTimer -= dt) <= 0 && planes.length < 2) {
+    const dir = Math.random() < 0.5 ? 1 : -1;          // 1 = flies to the right
+    planes.push({ x: dir > 0 ? -140 : W + 140, y: HORIZON * (0.3 + Math.random() * 0.3), dir,
+      vx: dir * (1.3 + Math.random() * 0.6), vy: -0.06 - Math.random() * 0.06,   // slowly climbing after take-off
+      s: 0.8 + Math.random() * 0.5 });
+    planeTimer = 260 + Math.random() * 260;
+  }
+  for (const pl of planes) { pl.x += pl.vx * dt; pl.y += pl.vy * dt; }
+  planes = planes.filter((pl) => pl.x > -200 && pl.x < W + 200);
+}
+// A passenger plane seen from the side (dir = which way it faces, s = size)
+function drawPlane(x, y, s, dir) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(dir * s, s);
+  ctx.rotate(-0.07);                                  // nose a little up
+  poly("#94a3b8", [-6, 2, 10, 2, -12, 16, -20, 16]);  // far wing
+  ctx.fillStyle = "#f1f5f9";                          // body
+  ctx.beginPath();
+  ctx.moveTo(-44, -6); ctx.lineTo(36, -6);
+  ctx.quadraticCurveTo(50, -4, 51, 0); ctx.quadraticCurveTo(48, 5, 36, 6);
+  ctx.lineTo(-40, 6); ctx.quadraticCurveTo(-48, 4, -46, -2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(100,116,139,0.35)";           // shade on the belly
+  ctx.fillRect(-42, 3, 80, 3);
+  ctx.fillStyle = "#1d4ed8"; ctx.fillRect(-44, 0.5, 86, 1.6);   // blue and red stripes
+  ctx.fillStyle = "#dc2626"; ctx.fillRect(-44, 2.3, 86, 0.9);
+  ctx.fillStyle = "#1e293b";                          // windows
+  for (let wx = -32; wx < 32; wx += 4.5) ctx.fillRect(wx, -3, 2.2, 2);
+  poly("#1e293b", [42, -4.5, 48, -2.5, 47, -0.5, 41, -1.5]);   // cockpit
+  poly("#1d4ed8", [-44, -6, -30, -6, -41, -25, -49, -25]);     // tail fin
+  poly("#facc15", [-45.5, -16, -40, -16, -38, -12, -43.5, -12]);   // yellow sun on the tail
+  poly("#94a3b8", [-46, 0, -33, 0, -48, 7]);          // small back wing
+  poly("#cbd5e1", [-4, 2, 12, 2, -10, 20, -19, 20]);  // near wing
+  ctx.fillStyle = "#64748b";                          // engine
+  ctx.beginPath(); ctx.ellipse(-4, 11, 7, 3.4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function drawPlanes() {
+  for (const pl of planes) drawPlane(pl.x, pl.y, pl.s, pl.dir);
+}
+// Blinking lights on the planes (drawn after the night darkness, so they glow)
+function drawPlaneLights() {
+  const glow = Math.max(0.35, atmo.night);
+  for (const pl of planes) {
+    const blink = Math.floor((frame + pl.x) / 25) % 3 === 0;
+    const lights = [[-19 * pl.dir, 20, pl.dir > 0 ? "255,40,40" : "40,255,90"], [-48 * pl.dir, -24, "255,255,255", blink],
+      [-4 * pl.dir, 8, "255,60,60", !blink]];
+    for (const [lx, ly, col, on = true] of lights) {
+      if (!on) continue;
+      const px = pl.x + lx * pl.s, py = pl.y + ly * pl.s;
+      const g = ctx.createRadialGradient(px, py, 0, px, py, 9 * pl.s);
+      g.addColorStop(0, `rgba(${col},${glow})`);
+      g.addColorStop(1, `rgba(${col},0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(px - 10 * pl.s, py - 10 * pl.s, 20 * pl.s, 20 * pl.s);
+    }
+  }
+}
+
 function drawWorld() {
   // Sky and background layers (far layers move slower = depth)
   ctx.fillStyle = skyGradient;
   ctx.fillRect(0, 0, W, HORIZON + 1);
   drawLayer(cloudLayer, bgOffset * 0.3);
+  drawPlanes();                                   // airplanes behind the mountains and buildings
   for (const key in backdrops) {                  // background mountains (they fade)
     if (bgWeight[key] < 0.01) continue;
     ctx.globalAlpha = bgWeight[key];
@@ -5404,7 +6532,8 @@ function drawWorld() {
   // fewer green hills so Taal Lake and the Manila buildings show
   drawWindmillBlades();                           // Ilocos: the turbines turn
   ctx.globalAlpha = Math.max(0, 1 - bgWeight.taal * 0.85 - bgWeight.manila * 0.95
-    - bgWeight.arayat * 0.8 - bgWeight.baguio * 0.9 - bgWeight.ilocos * 0.9);
+    - bgWeight.arayat * 0.8 - bgWeight.baguio * 0.9 - bgWeight.ilocos * 0.9
+    - NEW_BG.reduce((sum, k) => sum + bgWeight[k] * 0.9, 0));   // Visayas/Mindanao backgrounds hide the green hills
   drawLayer(hillLayer, bgOffset);
   ctx.globalAlpha = 1;
   ctx.fillStyle = fogged(GRASS.g1, 1);
@@ -5472,6 +6601,7 @@ function drawWorld() {
         box(sx - size * 0.45, seg.s1.y - size * 1.05, sx + size * 0.45, seg.s1.y);
         if (loc.palms) drawPalmTree(sx, seg.s1.y, size);
         else if (loc.pines) drawPineTree(sx, seg.s1.y, size);
+        else if (loc.jungle) drawJungleTree(sx, seg.s1.y, size);
         else if (sp.type === "tree") drawTree(sx, seg.s1.y, size);
         else drawBush(sx, seg.s1.y, size * 0.5);
       }});
@@ -5529,7 +6659,7 @@ function drawWorld() {
     // only PUP keeps its name sign; other buildings have no text
     placeOnRoad(sc, (sx, sy, k) => (box(sx - LANDMARKS[sc.kind].w * sc.scale * k * 0.6,
       sy - LANDMARKS[sc.kind].w * sc.scale * k * 1.1, sx + LANDMARKS[sc.kind].w * sc.scale * k * 0.6, sy),
-      LANDMARKS[sc.kind].draw(landPainter(sx, sy, k * sc.scale, ["pup", "welcome", "caution"].includes(sc.kind)), sc)));
+      LANDMARKS[sc.kind].draw(landPainter(sx, sy, k * sc.scale, ["pup", "welcome", "caution", "skyway"].includes(sc.kind)), sc)));
   }
   for (const p of pickups) placeOnRoad(p, (sx, sy, k) => drawPowerUp(p.kind, sx, sy, k * CAR_W));
 
@@ -5910,7 +7040,7 @@ function drawOverlays() {
   if (heat > 0.5 && (mode === "playing" || mode === "countdown")) {
     const showingCrossing = crossing && relZ(crossing.z, playerZ()) > 0;
     const temp = 38 + Math.round(Math.sin(frame * 0.01) + 1);
-    const text = `🔥 TAG-INIT CHALLENGE · ${temp}°C · survive Calamba for +₱100`;
+    const text = `🔥 TAG-INIT CHALLENGE · ${temp}°C · survive ${currentLocation().name} for +₱100`;
     ctx.font = "900 17px 'Trebuchet MS', sans-serif";
     const tw = ctx.measureText(text).width + 30;
     const by = showingCrossing ? 112 : 66;
@@ -5933,7 +7063,7 @@ function drawOverlays() {
     ctx.translate(W / 2, 120);
     ctx.scale(pop, pop);
     outlinedText(currentLocation().name.toUpperCase(), 0, 0, 72, "#facc15", "#1e293b", 10);
-    if (currentLocation().name === "Calamba") outlinedText("🔥 TAG-INIT CHALLENGE!", 0, 62, 32, "#fb923c", "#1e293b", 6);
+    if (currentLocation().heat) outlinedText("🔥 TAG-INIT CHALLENGE!", 0, 62, 32, "#fb923c", "#1e293b", 6);
     ctx.restore();
     ctx.globalAlpha = 1;
   }
@@ -6019,6 +7149,7 @@ function drawOverlays() {
 }
 
 function draw() {
+  if (mode === "flight") { drawFlight(); return; }       // the plane flight has its own picture
   ctx.save();
   // Screen shake: move everything a few random pixels
   if (shake > 0.5) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
@@ -6042,6 +7173,7 @@ function draw() {
   drawParticles();           // dust, spray, sparks and crash pieces
   drawCrashWorld();          // crash: shockwave, fire and comic words
   drawAtmosphere(lights);
+  drawPlaneLights();         // airplane lights blink on top of the darkness
   drawSpeedLines();
   ctx.restore();
   applyHeat();               // Calamba's TAG-INIT heat haze (does nothing elsewhere)
@@ -6050,7 +7182,29 @@ function draw() {
 
 // ----- 16. Game loop (~60 times per second) -----
 // It always runs. What it does depends on which screen we are on.
+// SAFETY: if something ever goes wrong in a frame, the game shows the problem in the
+// browser console but keeps running (instead of freezing on a half-drawn picture).
 function loop(now) {
+  try {
+    frameStep(now);
+  } catch (err) {
+    console.error("Kaskasero frame error:", err);
+  }
+  requestAnimationFrame(loop);
+}
+// Puts the drawing tools back to normal: drawing on the real screen, no leftover
+// transparency, zoom or blend mode from the frame before.
+function resetDrawing() {
+  ctx = gameCtx;
+  g = previewCanvas.getContext("2d");
+  noShadow = false;
+  svFlip = false;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+}
+function frameStep(now) {
+  resetDrawing();
   const dt = Math.min((now - lastTime) / (1000 / 60), 3);  // same speed on any PC
   lastTime = now;
 
@@ -6058,6 +7212,7 @@ function loop(now) {
   else if (mode === "countdown") updateCountdown(dt);    // 3, 2, 1, GO!
   else if (mode === "playing" && !paused) update(dt);    // the real game
   else if (mode === "crash") updateCrash(dt);            // WASAK! replay
+  else if (mode === "flight") updateFlight(dt);          // the plane flight to the island
   // (on "over" nothing moves: the crash scene stays frozen)
 
   if (!paused) updateEffects(dt);
@@ -6069,7 +7224,6 @@ function loop(now) {
   Music.update();
   updateGarage(now);         // the car turning on the garage turntable
   updateHowto(now);          // the little moving pictures on How to Play
-  requestAnimationFrame(loop);
 }
 
 // ===== HOW TO PLAY: little moving pictures =====
@@ -6293,8 +7447,8 @@ const DEMOS = {
   // the trip: Calauan → ... → Manila
   places(c, time) {
     const names = LOCATIONS.map((l) => l.name);
-    const icons = ["🍍", "🥖", "🌧️", "🔥", "🌙", "🌋", "🏙️", "⭐", "🌲", "🌬️"];
-    const skies = ["#7dd3fc", "#7dd3fc", "#94a3b8", "#fdba74", "#1e1b4b", "#fb7185", "#0f172a", "#86efac", "#cbd5e1", "#fb923c"];
+    const icons = LOCATIONS.map((l) => l.icon || "📍");
+    const skies = LOCATIONS.map((l) => (l.rain ? "#94a3b8" : l.time === "night" ? "#1e1b4b" : l.time === "sunset" ? "#fb923c" : l.heat ? "#fdba74" : "#7dd3fc"));
     const N = names.length;
     const pos = (time * 0.45) % N;
     const i = Math.floor(pos);
@@ -6413,25 +7567,27 @@ function updateHowto(now) {
   if (document.getElementById("howto").classList.contains("hidden")) return;
   if (!demoStart) demoStart = now;
   const time = (now - demoStart) / 1000;
-  const keepCtx = ctx;
-  for (const cv of demoCanvases) {
-    const fn = DEMOS[cv.dataset.demo];
-    if (!fn) continue;
-    ctx = cv.getContext("2d");
-    ctx.save();
-    ctx.clearRect(0, 0, DEMO_W, DEMO_H);
-    try { fn(ctx, time); } finally {
-      ctx.restore();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+  try {
+    for (const cv of demoCanvases) {
+      const fn = DEMOS[cv.dataset.demo];
+      if (!fn) continue;
+      ctx = cv.getContext("2d");
+      ctx.save();
+      ctx.clearRect(0, 0, DEMO_W, DEMO_H);
+      try { fn(ctx, time); } finally {
+        ctx.restore();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+      }
     }
+  } finally {
+    ctx = gameCtx;                               // always give the real screen back
   }
-  ctx = keepCtx;
 }
 
 // ----- 17. Switching screens -----
 // Shows one screen (or none) and hides the others
 function showScreen(screen) {
-  for (const el of [homeScreen, howtoScreen, overScreen]) el.classList.add("hidden");
+  for (const el of [homeScreen, howtoScreen, overScreen, mapsScreen]) el.classList.add("hidden");
   if (screen) screen.classList.remove("hidden");
   // The score bar and touch buttons only show during a run
   const inRun = ["countdown", "playing", "crash"].includes(mode);
@@ -6449,8 +7605,174 @@ function goHome() {
   showScreen(homeScreen);
 }
 
+// ----- Choosing a map -----
+// Each card shows the map's name, its theme, a little picture and the whole route,
+// so you know which places you'll drive through (Calauan → Bay → Los Baños → ...).
+const mapGrid = document.getElementById("map-grid");
+for (const [key, m] of Object.entries(MAPS)) {
+  const card = document.createElement("button");
+  card.className = "map-card";
+  card.dataset.map = key;
+  card.style.setProperty("--mc", m.color);
+  const km = m.places.length * 2.5;
+  card.innerHTML = `
+    <canvas width="240" height="84"></canvas>
+    <div class="map-title">${m.icon} ${m.name}</div>
+    <div class="map-theme">${m.theme}</div>
+    <div class="map-route">${m.places.map((pl) => `<span>${pl.icon || "📍"} ${pl.name}</span>`).join("<b>→</b>")}</div>
+    <div class="map-count">${m.places.length} places · ${km} km</div>
+    <span class="map-go">Tara na! ▶</span>`;
+  card.addEventListener("click", () => chooseMap(key));
+  card.addEventListener("pointerenter", () => pickMap(key));
+  mapGrid.appendChild(card);
+  drawMapPreview(card.querySelector("canvas"), m.places[0]);
+}
+// A small picture of the map's first place: sky, its background, grass and the road
+function drawMapPreview(cv, place) {
+  const c = cv.getContext("2d"), w = cv.width, h = cv.height, hy = h * 0.62;
+  const sky = c.createLinearGradient(0, 0, 0, hy);
+  sky.addColorStop(0, place.time === "sunset" ? "#fb923c" : place.time === "night" ? "#0f172a" : "#7dd3fc");
+  sky.addColorStop(1, place.time === "sunset" ? "#fde68a" : place.time === "night" ? "#312e81" : "#e0f2fe");
+  c.fillStyle = sky;
+  c.fillRect(0, 0, w, hy);
+  const bg = backdrops[place.bg] || backdrops.generic;
+  c.drawImage(bg, 0, 0, W, bg.height, 0, hy - (bg.height * w) / W, w, (bg.height * w) / W);
+  const [g1] = place.grass || [COL.grass1];
+  c.fillStyle = `rgb(${g1.map(Math.round).join(",")})`;
+  c.fillRect(0, hy, w, h - hy);
+  c.fillStyle = "#475569";                       // the road going into the distance
+  c.beginPath(); c.moveTo(w / 2 - 6, hy); c.lineTo(w / 2 + 6, hy); c.lineTo(w * 0.8, h); c.lineTo(w * 0.2, h); c.fill();
+  c.fillStyle = "#f8fafc";
+  for (let i = 0; i < 4; i++) c.fillRect(w / 2 - 1, hy + 4 + i * 7, 2, 4);
+}
+// Highlight a map (mouse over or arrow keys)
+function pickMap(key) {
+  mapChoice = key;
+  for (const card of mapGrid.children) card.classList.toggle("selected", card.dataset.map === key);
+}
+function openMaps() {
+  if (isLocked(PLAYER_TYPES[typeChoice])) return;   // can't drive a locked vehicle
+  Sound.init();
+  pickMap(loadMapChoice());
+  transition(() => showScreen(mapsScreen));
+}
+// Start driving on this map
+function chooseMap(key) {
+  pickMap(key);
+  saveMapChoice(key);
+  LOCATIONS = MAPS[key].places;
+  transition(startFlight);                       // first a short flight to the island, then drive
+}
+
+// ----- THE FLIGHT: a plane flies over the sea and islands to the map you picked -----
+const FLIGHT_TIME = 210;                         // 3.5 seconds (tap or press a key to skip)
+let flightT = 0;
+let flightIslands = [];
+function startFlight() {
+  if (isLocked(PLAYER_TYPES[typeChoice])) return;
+  Sound.init();
+  Sound.jet();
+  resetGame();                                   // gets the road ready (we fly over it first)
+  mode = "flight";
+  flightT = 0;
+  showScreen(null);
+  // islands below us: Luzon = big mountains, Visayas = lots of small islands, Mindanao = big green with a volcano
+  const kind = mapChoice;
+  flightIslands = [];
+  for (let i = 0; i < (kind === "visayas" ? 9 : 4); i++) {
+    const big = kind !== "visayas";
+    flightIslands.push({ x: W * 0.2 + i * (big ? 420 : 210) + Math.random() * 80, y: H * (0.68 + Math.random() * 0.2),
+      r: big ? 150 + Math.random() * 80 : 50 + Math.random() * 50, peak: kind === "mindanao" && i % 2 === 0, seed: Math.random() * 6 });
+  }
+}
+function updateFlight(dt) {
+  flightT += dt;
+  if (flightT >= FLIGHT_TIME) startGame();
+}
+function skipFlight() {
+  if (mode === "flight") flightT = Math.max(flightT, FLIGHT_TIME - 20);
+}
+function drawFlight() {
+  const m = MAPS[mapChoice], t = flightT / FLIGHT_TIME, first = LOCATIONS[0];
+  // sky
+  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.55);
+  sky.addColorStop(0, "#38bdf8");
+  sky.addColorStop(1, "#e0f2fe");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H * 0.55);
+  ctx.fillStyle = "rgba(254,240,138,0.9)";                // sun
+  ctx.beginPath(); ctx.arc(W * 0.82, H * 0.14, 34, 0, Math.PI * 2); ctx.fill();
+  // the sea far below, with sparkles
+  const sea = ctx.createLinearGradient(0, H * 0.55, 0, H);
+  sea.addColorStop(0, "#7dd3fc");
+  sea.addColorStop(1, "#0369a1");
+  ctx.fillStyle = sea;
+  ctx.fillRect(0, H * 0.55, W, H * 0.45);
+  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  for (let i = 0; i < 40; i++) {
+    const sx = ((i * 137 - flightT * 3) % (W + 40) + W + 40) % (W + 40) - 20, sy = H * 0.58 + ((i * 53) % 220);
+    ctx.fillRect(sx, sy, 12 + (i % 3) * 6, 1.5);
+  }
+  // islands slide past underneath
+  for (const isl of flightIslands) {
+    const ix = isl.x - flightT * 4.5, iy = isl.y, r = isl.r;
+    if (ix < -r * 2 || ix > W + r * 2) continue;
+    ctx.fillStyle = "#fde68a";                            // sandy beach around it
+    ctx.beginPath(); ctx.ellipse(ix, iy, r * 1.08, r * 0.36, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#4d9a54";
+    ctx.beginPath(); ctx.ellipse(ix, iy, r, r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#3b7f45";
+    for (let k = 0; k < 6; k++) {                         // forest bumps
+      ctx.beginPath(); ctx.ellipse(ix - r * 0.6 + k * r * 0.24, iy - r * 0.04 + Math.sin(k + isl.seed) * r * 0.06, r * 0.16, r * 0.08, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    if (isl.peak || mapChoice === "luzon") {              // a mountain (or volcano) in the middle
+      poly("#5b8f5f", [ix - r * 0.35, iy, ix, iy - r * 0.42, ix + r * 0.35, iy]);
+      poly("#e5e7eb", [ix - r * 0.08, iy - r * 0.32, ix, iy - r * 0.42, ix + r * 0.08, iy - r * 0.32]);
+    }
+  }
+  // clouds behind the plane
+  const cloud = (cx, cy, sc, a) => {
+    ctx.fillStyle = `rgba(255,255,255,${a})`;
+    for (const [dx, dy, rr] of [[0, 0, 40], [38, -12, 34], [70, 2, 30], [-34, 6, 28]]) {
+      ctx.beginPath(); ctx.arc(cx + dx * sc, cy + dy * sc, rr * sc, 0, Math.PI * 2); ctx.fill();
+    }
+  };
+  for (let i = 0; i < 5; i++) cloud(((i * 260 - flightT * 2) % (W + 300) + W + 300) % (W + 300) - 150, 70 + (i % 3) * 50, 0.8, 0.85);
+  // the plane: flies in from the left, then cruises in the middle and bobs gently
+  const px = -200 + Math.min(1, t / 0.35) * (W * 0.5 + 200) + Math.max(0, t - 0.75) * 900;
+  const py = H * 0.4 + Math.sin(flightT * 0.06) * 8;
+  ctx.strokeStyle = "rgba(255,255,255,0.75)";             // white trail behind
+  ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(px - 170, py - 2); ctx.lineTo(px - 600, py + 6); ctx.stroke();
+  drawPlane(px, py, 3.4, 1);
+  // clouds in front (fast)
+  for (let i = 0; i < 3; i++) cloud(((i * 430 - flightT * 9) % (W + 500) + W + 500) % (W + 500) - 250, 340 + i * 40, 1.6, 0.75);
+  // the words
+  const pop = Math.min(1, flightT / 25);
+  ctx.save();
+  ctx.translate(W / 2, 70);
+  ctx.scale(pop, pop);
+  outlinedText(`✈ Lipad papuntang ${m.name}!`, 0, 0, 46, "#ffffff", "#1e293b", 8);
+  ctx.restore();
+  outlinedText(`Unang hinto: ${first.icon || "📍"} ${first.name}`, W / 2, 122, 26, "#facc15", "#1e293b", 6);
+  ctx.font = "bold 15px 'Trebuchet MS', sans-serif";
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.textAlign = "center";
+  ctx.fillText("Tap to skip", W / 2, H - 14);
+  // fade to white at the end, then the road appears
+  if (t > 0.85) {
+    ctx.fillStyle = `rgba(255,255,255,${(t - 0.85) / 0.15})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+document.getElementById("maps-back").addEventListener("click", () => transition(() => showScreen(homeScreen)));
+
 function startGame() {
   if (isLocked(PLAYER_TYPES[typeChoice])) return;   // can't drive a locked vehicle
+  if (!ownedColors.includes(carChoice)) {            // only trying a color on? drive with your own
+    carChoice = ownedChoice;
+    showCarChoice();
+  }
   Sound.init();          // browsers only allow sound after a click or key press
   resetGame();
   mode = "countdown";
@@ -6513,6 +7835,63 @@ function closeIntro(e) {
 }
 window.addEventListener("keydown", closeIntro, true);
 intro.addEventListener("pointerdown", closeIntro);
+
+// ----- Vehicles driving on the intro road -----
+// We reuse the side pictures from the garage (buildFaces), in different colors.
+const introCanvas = document.getElementById("intro-cars");
+const introSprites = (() => {
+  const list = [], keepColor = carChoice;
+  // [vehicle number, color number]: sports cars, electric, muscle, jeepney, Hari ng Daan
+  for (const [t, c] of [[0, 0], [0, 5], [1, 1], [2, 6], [3, 0], [4, 0], [0, 4], [2, 8], [3, 0], [1, 2]]) {
+    carChoice = c;
+    facesKey = "";
+    const f = buildFaces(PLAYER_TYPES[t]);
+    const copy = (src) => { const cv = document.createElement("canvas"); cv.width = FACE_W; cv.height = FACE_H; cv.getContext("2d").drawImage(src, 0, 0); return cv; };
+    list.push({ right: copy(f.side), left: copy(f.sideL), x0: f.sx0, x1: f.sx1, top: GROUND - f.h });
+  }
+  carChoice = keepColor;
+  facesKey = "";                                 // the garage makes its own pictures again
+  return list;
+})();
+let introCars = [], introLast = 0, introSpawn = 0;
+function introLoop(now) {
+  if (!intro.isConnected) return;                // the intro is gone: stop
+  try { introFrame(now); } catch (err) { console.error("Intro error:", err); }
+  requestAnimationFrame(introLoop);
+}
+function introFrame(now) {
+  const dpr = window.devicePixelRatio || 1;
+  const cw = introCanvas.clientWidth, ch = introCanvas.clientHeight;
+  if (introCanvas.width !== Math.round(cw * dpr)) { introCanvas.width = Math.round(cw * dpr); introCanvas.height = Math.round(ch * dpr); }
+  const c = introCanvas.getContext("2d");
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, cw, ch);
+  const dt = Math.min(3, (now - (introLast || now)) / (1000 / 60));
+  introLast = now;
+  const roadTop = ch * (1 - 28 / 42);            // where the road starts in this canvas
+  const lanes = [roadTop + (ch - roadTop) * 0.42, roadTop + (ch - roadTop) * 0.9];   // far lane, near lane
+  if ((introSpawn -= dt) <= 0) {                 // a new vehicle every so often
+    const lane = Math.random() < 0.5 ? 0 : 1;
+    const dir = lane === 1 ? 1 : -1;             // near lane goes right, far lane comes the other way
+    const sp = introSprites[Math.floor(Math.random() * introSprites.length)];
+    const scale = (lane === 1 ? 0.9 : 0.62) * Math.min(1.4, ch / 260);
+    introCars.push({ sp, lane, dir, scale, x: dir > 0 ? -320 * scale : cw + 20, vx: dir * (3 + Math.random() * 3) });
+    introSpawn = 30 + Math.random() * 50;
+  }
+  introCars.sort((a, b) => a.lane - b.lane);     // far lane first
+  for (const car of introCars) {
+    car.x += car.vx * dt;
+    const img = car.dir > 0 ? car.sp.right : car.sp.left;
+    const ix0 = car.dir > 0 ? car.sp.x0 : FACE_W - car.sp.x1, iw = car.sp.x1 - car.sp.x0;
+    const w = iw * car.scale, h = GROUND * car.scale, y = lanes[car.lane];
+    const bounce = Math.floor(now / 90 + car.x) % 2;   // a tiny engine bounce
+    c.fillStyle = "rgba(0,0,0,0.35)";
+    c.beginPath(); c.ellipse(car.x + w / 2, y, w * 0.5, 5 * car.scale, 0, 0, Math.PI * 2); c.fill();
+    c.drawImage(img, ix0, 0, iw, GROUND, car.x, y - h - bounce, w, h);
+  }
+  introCars = introCars.filter((car) => car.x > -400 && car.x < cw + 400);
+}
+requestAnimationFrame(introLoop);
 
 // Start on the home screen
 showGarage();
