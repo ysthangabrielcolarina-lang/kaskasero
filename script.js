@@ -155,7 +155,7 @@ const PLAYER_TYPES = [
     special: "Very fast. Close calls give +50% points." },
   { id: "jeepney",  name: "Jeepney",      w: 660, hit: 1,    maxSpeed: 190, refillShield: true,
     special: "Matibay! Free shield in every new place." },
-  // The secret one: best at everything. Unlock by reaching Tagaytay or paying ₱650.
+  // The secret one: best at everything. The only way to unlock it: pay ₱650 from your Pera.
   { id: "hari", name: "Hari ng Daan", tag: "E-BIKE", w: 440, hit: 0.75, maxSpeed: 250, locked: true, price: 650,
     startSpeed: 130, coinMult: 2, powerMult: 1.6, nearMult: 1.5, refillShield: true,
     special: "Ang Hari ng Daan! Max speed, slimmest, double ₱, all bonuses." },
@@ -2352,10 +2352,6 @@ function updateLevel() {
     }
     bannerT = 210;        // show "Now entering ..." for 3.5 seconds
     Sound.levelUp();
-    if (currentLocation().name === "Tagaytay" && !hariUnlocked) {   // the secret unlock
-      unlockHari();
-      popup("UNLOCKED: HARI NG DAAN!", "#facc15");
-    }
     if (ptype().refillShield && !shield) {             // jeepney / Hari special
       shield = true;
       popup("SHIELD!", POWERS.shield.color);

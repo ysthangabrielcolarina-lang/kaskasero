@@ -1,6 +1,6 @@
 # 🚗 Kaskasero!
 
-A Filipino-themed 2D highway racing game that runs right in your browser. Weave through jeepneys, tricycles and trucks on a road trip across Laguna, from **Calauan** all the way to **Manila**!
+A Filipino-themed 2D highway racing game that runs right in your browser. Weave through jeepneys, tricycles and trucks on a road trip from **Calauan**, Laguna through **Manila** and all the way north to **Ilocos**!
 
 ## ▶ Play now
 
@@ -27,8 +27,8 @@ Works on computers and phones. No download needed.
 
 ## ⭐ Features
 
-- **A road trip through real places:** Calauan → Bay → Los Baños → Calamba → SLEX → Tagaytay → Manila, each 2.5 km apart.
-- **Local landmarks:** the Pineapple Plaza and PUP Calauan, Bay's garden shops and monay bakeries, the Rizal Shrine in Calamba, plus Mt. Kalisungan, Mt. Makiling and Taal Volcano in the background.
+- **A road trip through real places:** Calauan → Bay → Los Baños → Calamba → SLEX → Tagaytay → Manila → Pampanga → Baguio → Ilocos, each 2.5 km apart.
+- **Local landmarks:** the Pineapple Plaza and PUP Calauan, Bay's garden shops and monay bakeries, the Rizal Shrine in Calamba, plus Mt. Kalisungan, Mt. Makiling and Taal Volcano in the background. North of Manila: giant parols, sisig and Mt. Arayat in Pampanga; the pink cathedral, Burnham Park and strawberry farms in foggy, pine-covered Baguio; Vigan's heritage houses, Paoay Church and the Bangui windmills in Ilocos.
 - **Filipino traffic:** jeepneys, tricycles, e-bikes, kalesas, provincial buses, L-300s and trucks.
 - **Road events:** "PARA!" jeepney stops, cars changing lanes, and floods in Los Baños.
 - **Weather and time of day:** rain, sunset and night driving with glowing tail lights.
@@ -36,10 +36,10 @@ Works on computers and phones. No download needed.
   - 🛡 **Shield:** blocks one crash.
   - 🧲 **Magnet:** pulls coins to you.
   - ⏱ **Slow-mo:** traffic moves at half speed.
-  - 🧹 **Walis:** clears every vehicle off the road for 2 seconds.
+  - 👮 **Enforcer:** a traffic enforcer blows the whistle ("PRRRT! TABI!") and clears every vehicle off the road for 2 seconds.
 - **Garage:** choose a Sports Car, Electric Car, Retro Muscle or Jeepney. Your pick spins 360° on a turntable in the Kaskasero Garage (drag it to turn it yourself).
 - **Picture guide:** the How to Play screen shows a small moving demo for every rule, power-up and danger.
-- **Secret vehicle:** unlock 👑 **Hari ng Daan**, a maxed-out e-bike, by reaching Tagaytay or buying it for ₱500.
+- **Secret vehicle:** unlock 👑 **Hari ng Daan**, a maxed-out e-bike, by buying it for ₱650 Pera (the pesos you collect while driving).
 - **Sounds:** engine, horns, coins, rain and crashes, all made in code with the Web Audio API (no sound files).
 
 ## 🛠 Built with
