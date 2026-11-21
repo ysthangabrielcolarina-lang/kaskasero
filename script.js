@@ -681,6 +681,12 @@ let clearT = 0;        // ENFORCER power-up: frames left with no traffic
 let crossing = null;   // the pedestrian crossing ahead (or null)
 let crossTimer = 900;  // frames until the next crossing
 let crashText = "WASAK!";
+// Crash animation
+let crashCar = null;     // the vehicle you hit (it gets knocked away)
+let crashSide = 1;       // 1 = it was on your right, -1 = on your left
+let crashKind = "hit";   // "hit" = hit a vehicle, "stop" = braked hard at a crossing (HINTO!)
+let crashCracks = [];    // cracked-screen lines
+let crashWords = [];     // little comic words ("BLAG!") flying from the crash
 let combo, comboT, kita, floods, floodTimer, inFlood, splashT, magnetMax, slowMax, firstPickup;
 // Roadside scenery (see section 9d-2)
 let odo, zones, scenery, sceneryQueue, nextLandmarkAt, nextFillerAt, landmarkSide = 1;
@@ -731,6 +737,9 @@ function resetGame() {
   tilt = 0;
   recordShown = false;
   crashText = "WASAK!";
+  crashCar = null;
+  crashWords = [];
+  crashCracks = [];
   invulnT = 0;
   pickupTimer = 240;      // first power-up after ~4 seconds
   laneChangeTimer = 200;
@@ -2013,6 +2022,12 @@ const Sound = {
 
   coin()   { this.tone(988, 0.08, "square", 0.08); this.tone(1319, 0.22, "square", 0.08, null, 0.07); },
   crash()  { this.noise(0.9, 0.7, 900); this.tone(140, 0.7, "sawtooth", 0.3, 35); },
+  // Glass breaking: a few quick, high "tssk" sounds one after another
+  shatter() { [0, 0.05, 0.11, 0.19].forEach((d, i) => this.noise(0.18 - i * 0.03, 0.35, 4500 + i * 900, "highpass", d)); },
+  // Metal parts hitting the road: short "klang" tones
+  clank(delay = 0) { this.tone(420 + Math.random() * 300, 0.12, "square", 0.08, 180, delay); },
+  // Tires screeching when you brake hard
+  screech() { this.tone(1300, 0.6, "sawtooth", 0.07, 900); this.noise(0.6, 0.25, 2600, "bandpass"); },
   introHorn() {  // the intro: "beep-beep-beeeep!" plus a little engine rev
     [[0, 0.14], [0.2, 0.14], [0.4, 0.55]].forEach(([d, len]) => {
       this.tone(415, len, "square", 0.09, null, d);
@@ -2810,6 +2825,14 @@ function updateParticles(dt) {
     p.vy += p.g * dt;
     p.life -= dt;
     if (p.kind === "puff") p.size += 0.45 * dt;    // dust spreads out
+    if (p.rot !== undefined) p.rot += p.spin * dt; // crash pieces turn as they fly
+    if (p.floor !== undefined && p.y > p.floor && p.vy > 0) {   // they bounce on the road
+      p.y = p.floor;
+      p.vy *= -0.38;
+      p.vx *= 0.7;
+      p.spin *= 0.7;
+      if (p.kind === "wheel") p.spin = p.vx * 0.07;   // the tire keeps rolling
+    }
   }
   parts = parts.filter((p) => p.life > 0);
   for (const c of confetti) {
@@ -2824,7 +2847,31 @@ function updateParticles(dt) {
 function drawParticles() {
   for (const p of parts) {
     const a = p.life / p.max;                       // fades out as it gets older
-    if (p.kind === "spark") {
+    if (p.kind === "debris" || p.kind === "wheel") {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, p.life / 25);
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      if (p.kind === "wheel") {                     // tire with a rim and spokes
+        ctx.fillStyle = "#111111";
+        ctx.beginPath(); ctx.arc(0, 0, p.size, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#c0c4c8";
+        ctx.beginPath(); ctx.arc(0, 0, p.size * 0.55, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#4b5563";
+        for (let i = 0; i < 4; i++) ctx.fillRect(-p.size * 0.08, 0, p.size * 0.16, p.size * 0.5), ctx.rotate(Math.PI / 2);
+      } else if (p.shape === "tri") {               // glass shard
+        ctx.fillStyle = p.fill;
+        ctx.beginPath(); ctx.moveTo(0, -p.size); ctx.lineTo(p.size * 0.7, p.size * 0.6); ctx.lineTo(-p.size * 0.6, p.size * 0.4); ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.7)";
+        ctx.fillRect(-1, -p.size * 0.5, 2, p.size * 0.6);
+      } else {                                      // a bent piece of the car
+        ctx.fillStyle = p.fill;
+        ctx.fillRect(-p.size / 2, -p.size * 0.3, p.size, p.size * 0.6);
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(-p.size / 2, p.size * 0.1, p.size, p.size * 0.2);
+      }
+      ctx.restore();
+    } else if (p.kind === "spark") {
       ctx.strokeStyle = `rgba(${p.color},${a})`;
       ctx.lineWidth = p.size;
       ctx.beginPath();
@@ -2945,7 +2992,7 @@ function update(dt, demo = false) {
         useShield(car);
         continue;
       }
-      startCrash();
+      startCrash("WASAK!", car);
       return;
     }
     if (before >= 0 && now < 0 && !demo) {
@@ -3026,21 +3073,192 @@ function updateCountdown(dt) {
   }
 }
 
-// Crash: freeze, zoom in a little, show "WASAK!", then Game Over
-function startCrash(text = "WASAK!") {
+// Crash: the cars spin and fly, parts and glass go everywhere, "WASAK!", then Game Over.
+// At a crossing ("HINTO!") there's no crash: the car brakes hard and skids instead.
+const CRASH_TIME = 140;          // frames until the Game Over screen (about 2.3 seconds)
+function startCrash(text = "WASAK!", car = null) {
   crashText = text;
   mode = "crash";
   crashT = 0;
-  shake = 28;
+  crashCar = car;
+  crashKind = car ? "hit" : "stop";
+  crashSide = car ? (car.x > playerX ? 1 : car.x < playerX ? -1 : (Math.random() < 0.5 ? -1 : 1)) : 1;
+  crashWords = [];
+  crashCracks = [];
+  const p = playerScreen();
+  if (crashKind === "stop") {    // HINTO!: hard braking, tire smoke
+    shake = 12;
+    Sound.screech();
+    return;
+  }
+  shake = 30;
   flashT = 10;
   Sound.crash();
+  Sound.shatter();
+  for (let i = 0; i < 4; i++) Sound.clank(0.25 + i * 0.13);   // parts landing on the road
+  const ix = p.x + crashSide * p.w * 0.35, iy = p.y - p.w * 0.4;   // where they touched
+  const col = PLAYER_COLORS[carChoice].body;
+  // flying pieces: body parts (your color and a dark grey) and glass shards
+  for (let i = 0; i < 34; i++) {
+    const glass = i % 3 === 0;
+    addPart({ kind: "debris", x: ix, y: iy, vx: (Math.random() - 0.5) * 14, vy: -4 - Math.random() * 8,
+      g: 0.45, life: 110, max: 110, floor: p.y + Math.random() * 30, rot: Math.random() * 6,
+      spin: (Math.random() - 0.5) * 0.6, size: glass ? 3 + Math.random() * 4 : 4 + Math.random() * 7,
+      shape: glass ? "tri" : "rect", fill: glass ? "#bfe3f5" : i % 2 ? col : "#3f3f46" });
+  }
+  // a tire comes off and rolls away
+  addPart({ kind: "wheel", x: ix, y: iy, vx: crashSide * (5 + Math.random() * 2), vy: -9, g: 0.5,
+    life: 130, max: 130, floor: p.y + 6, rot: 0, spin: crashSide * 0.35, size: p.w * 0.11 });
+  for (let i = 0; i < 40; i++) {                   // sparks
+    const a = Math.random() * Math.PI * 2;
+    addPart({ kind: "spark", x: ix, y: iy, vx: Math.cos(a) * (3 + Math.random() * 7), vy: Math.sin(a) * 5 - 2,
+      g: 0.2, life: 26, max: 26, size: 2.5, color: Math.random() < 0.5 ? "255,214,10" : "255,140,30" });
+  }
+  // comic words flying out
+  crashWords = [["BLAG!", -1], ["KRASH!", 1], ["ARAY!", 0]].map(([w, dir], i) => ({
+    text: w, x: ix, y: iy - 20, vx: (dir || crashSide) * (3 + i), vy: -5 - i, t: 0, delay: i * 8 }));
+  // cracked-screen lines going out from the crash (made once, drawn on top of the screen)
+  const cx = p.x + crashSide * p.w * 0.2, cy = p.y - p.w * 0.6;
+  for (let i = 0; i < 11; i++) {
+    let a = (i / 11) * Math.PI * 2 + Math.random() * 0.4, x = cx, y = cy;
+    const line = [[x, y]];
+    const len = 120 + Math.random() * 260;
+    for (let d = 0; d < len; d += 25 + Math.random() * 25) {
+      a += (Math.random() - 0.5) * 0.5;            // zig-zag a little
+      x += Math.cos(a) * 30;
+      y += Math.sin(a) * 30;
+      line.push([x, y]);
+    }
+    crashCracks.push(line);
+  }
+  crashCracks.center = [cx, cy];
+}
+
+// How far your car has spun, hopped and slid at this moment of the crash
+function crashMotion(p) {
+  if (mode !== "crash") return null;
+  const t = crashT;
+  if (crashKind === "stop") {                      // braking: the car dips forward and shakes a bit
+    const dip = Math.max(0, 1 - t / 25);
+    return { dx: 0, dy: dip * p.w * 0.04, rot: Math.sin(t * 0.8) * 0.02 * dip, sx: 1 };
+  }
+  const e = 1 - Math.pow(1 - Math.min(1, t / 50), 3);   // fast at first, then slows down
+  const hop = t < 28 ? Math.sin((t / 28) * Math.PI) * p.w * 0.32
+    : t < 44 ? Math.sin(((t - 28) / 16) * Math.PI) * p.w * 0.07 : 0;   // a big hop, then a small bounce
+  return {
+    dx: -crashSide * e * p.w * 0.6,                // thrown away from the vehicle you hit
+    dy: -hop,
+    rot: -crashSide * (e * 0.95 + Math.sin(t * 0.3) * 0.04 * (1 - e)),   // spins
+    sx: 1 - 0.25 * Math.sin(e * Math.PI),          // squashes as if it's rolling over a little
+  };
 }
 
 function updateCrash(dt) {
   crashT += dt;
   const t = Math.min(1, crashT / 35);
   crashZoom = 0.2 * (1 - (1 - t) * (1 - t));   // ease out: fast then slow
-  if (crashT >= 120) gameOver();
+  const p = playerScreen();
+  const m = crashMotion(p);
+  if (crashKind === "stop") {
+    if (crashT < 40) for (const wx of [-0.38, 0.38]) {   // thick tire smoke from both back wheels
+      addPart({ kind: "puff", x: p.x + wx * p.w, y: p.y - 4, vx: (Math.random() - 0.5) * 2, vy: 0.5 + Math.random(),
+        g: 0, life: 40, max: 40, size: 9, color: "225,225,225" });
+    }
+  } else if (Math.random() < 0.5 * dt) {           // dark smoke rising from the wreck
+    addPart({ kind: "puff", x: p.x + m.dx + (Math.random() - 0.5) * p.w * 0.4, y: p.y + m.dy - p.w * 0.45,
+      vx: (Math.random() - 0.5) * 0.8, vy: -1.2 - Math.random(), g: 0, life: 60, max: 60, size: 8,
+      color: crashT > 30 ? "70,70,75" : "150,150,150" });
+  }
+  for (const w of crashWords) {
+    if (w.delay > 0) { w.delay -= dt; continue; }
+    w.t += dt;
+    w.x += w.vx * dt;
+    w.y += w.vy * dt;
+    w.vy += 0.25 * dt;
+  }
+  if (crashT >= CRASH_TIME) gameOver();
+}
+
+// Drawn in the world, on top of the cars: the shockwave, fire and the comic words
+function drawCrashWorld() {
+  if (mode !== "crash" || crashKind !== "hit") return;
+  const p = playerScreen(), m = crashMotion(p);
+  if (crashT < 24) {                               // shockwave ring
+    const k = crashT / 24;
+    ctx.strokeStyle = `rgba(255,255,255,${0.8 * (1 - k)})`;
+    ctx.lineWidth = 8 * (1 - k) + 1;
+    ctx.beginPath();
+    ctx.ellipse(p.x + crashSide * p.w * 0.35, p.y - p.w * 0.3, p.w * (0.3 + k * 1.6), p.w * (0.12 + k * 0.5), 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  if (crashT > 30) {                               // small fire on the wreck
+    const fx = p.x + m.dx, fy = p.y + m.dy - p.w * 0.5;
+    for (let i = 0; i < 5; i++) {
+      const h = p.w * (0.14 + 0.08 * Math.sin(frame * 0.6 + i * 1.7)), x = fx + (i - 2) * p.w * 0.06;
+      poly(i % 2 ? "rgba(255,140,30,0.9)" : "rgba(255,214,10,0.9)", [x - p.w * 0.04, fy, x + p.w * 0.04, fy, x, fy - h]);
+    }
+  }
+  for (const w of crashWords) {
+    if (w.delay > 0) continue;
+    const a = Math.max(0, 1 - w.t / 70);
+    if (a <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.translate(w.x, w.y);
+    ctx.rotate(Math.sin(w.t * 0.2) * 0.2);
+    const sc = Math.min(1, w.t / 6);
+    ctx.scale(sc, sc);
+    outlinedText(w.text, 0, 0, 30, w.text === "ARAY!" ? "#ffffff" : "#ffd23f");
+    ctx.restore();
+  }
+}
+
+// Drawn on top of the screen: cracks, red edges, and the starburst behind "WASAK!"
+function drawCrashScreen() {
+  if (mode !== "crash") return;
+  if (crashKind === "hit" && crashT > 3) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, (crashT - 3) / 4);
+    ctx.lineJoin = "round";
+    for (const [color, width, off] of [["rgba(0,0,0,0.35)", 3, 1.5], ["rgba(255,255,255,0.8)", 1.6, 0]]) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      for (const line of crashCracks) {
+        ctx.beginPath();
+        line.forEach(([x, y], i) => (i ? ctx.lineTo(x + off, y + off) : ctx.moveTo(x + off, y + off)));
+        ctx.stroke();
+      }
+    }
+    const [cx, cy] = crashCracks.center;           // rings around the middle of the crack
+    ctx.strokeStyle = "rgba(255,255,255,0.6)";
+    for (const r of [26, 60]) { ctx.beginPath(); ctx.arc(cx, cy, r, 0.3, 5.6); ctx.stroke(); }
+    ctx.restore();
+    const pulse = Math.max(0, 1 - crashT / 50);     // red edges that fade
+    if (pulse > 0) {
+      const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, W * 0.65);
+      v.addColorStop(0, "rgba(220,38,38,0)");
+      v.addColorStop(1, `rgba(220,38,38,${0.55 * pulse})`);
+      ctx.fillStyle = v;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+  if (crashT > 6) {                                // comic starburst behind the big word
+    const t = Math.min(1, (crashT - 6) / 10);
+    const s = t * (1 + Math.sin(crashT * 0.3) * 0.04);
+    ctx.save();
+    ctx.translate(W / 2, H * 0.4);
+    ctx.rotate(crashT * 0.01);
+    ctx.scale(s, s);
+    for (const [r1, r2, color] of [[250, 150, "#ffd23f"], [195, 120, "#ff7a00"]]) {
+      const pts = [];
+      for (let i = 0; i < 28; i++) {
+        const a = (i / 28) * Math.PI * 2, r = i % 2 ? r2 : r1 * (0.85 + ((i * 37) % 10) / 40);
+        pts.push(Math.cos(a) * r, Math.sin(a) * r * 0.62);
+      }
+      poly(color, pts);
+    }
+    ctx.restore();
+  }
 }
 
 // Things that keep moving on every screen (unless paused)
@@ -5261,6 +5479,18 @@ function drawWorld() {
         ctx.globalAlpha *= 1 - exitP * 0.6;
       }
       box(sx - w * 0.65, sy - VEHICLES[car.type].h * w * 1.1, sx + w * 0.65, sy);
+      if (mode === "crash" && car === crashCar) {     // the vehicle you hit spins away too
+        const e = 1 - Math.pow(1 - Math.min(1, crashT / 45), 3);
+        const hop = crashT < 26 ? Math.sin((crashT / 26) * Math.PI) * w * 0.18 : 0;
+        ctx.save();
+        ctx.translate(sx + crashSide * e * w * 0.5, sy - w * 0.3 - hop - e * w * 0.15);
+        ctx.rotate(crashSide * e * 0.55);
+        ctx.translate(-sx, -(sy - w * 0.3));
+        drawVehicle(car, sx, sy, k);
+        ctx.restore();
+        lights.push({ x: sx, y: sy, w, fog });
+        return;
+      }
       drawVehicle(car, sx, sy, k);
       drawBlinker(car, sx, sy, w);
       if (car.brakeT > 0) drawPara(sx, sy, w);
@@ -5292,11 +5522,24 @@ function drawWorld() {
     if (slowT > 0 && !paused) { ghostXs.unshift(p.x); if (ghostXs.length > 16) ghostXs.pop(); }
     else if (slowT <= 0) ghostXs.length = 0;
     drawPlayerPowerFx(p, true);
+    const cm = crashMotion(p);
+    if (cm && crashKind === "stop") {                // skid marks behind the wheels
+      const len = Math.min(1, crashT / 15) * p.w * 0.9;
+      ctx.fillStyle = "rgba(20,20,20,0.55)";
+      for (const wx of [-0.4, 0.31]) ctx.fillRect(p.x + wx * p.w, p.y - 2, p.w * 0.09, len);
+    }
     if (!blinkOff) {
       ctx.save();                                    // lean the car while changing lanes
-      ctx.translate(p.x, p.y);
-      ctx.rotate(tilt);
-      ctx.translate(-p.x, -p.y);
+      if (cm) {                                      // crash: spin, hop and slide
+        ctx.translate(p.x + cm.dx, p.y - p.w * 0.3 + cm.dy);
+        ctx.rotate(cm.rot);
+        ctx.scale(cm.sx, 1);
+        ctx.translate(-p.x, -(p.y - p.w * 0.3));
+      } else {
+        ctx.translate(p.x, p.y);
+        ctx.rotate(tilt);
+        ctx.translate(-p.x, -p.y);
+      }
       drawPlayerVehicle(ptype(), p.x, p.y - bounce, p.w);
       ctx.restore();
     }
@@ -5730,6 +5973,8 @@ function drawOverlays() {
     ctx.globalAlpha = 1;
   }
 
+  drawCrashScreen();         // crash: cracked screen, red edges, starburst
+
   // "WASAK!" pops in when you crash
   if (mode === "crash" && crashT > 6) {
     const t = Math.min(1, (crashT - 6) / 12);
@@ -5772,7 +6017,8 @@ function draw() {
     ctx.translate(-W / 2, -H * 0.8);
   }
   const lights = drawWorld();
-  drawParticles();           // dust, spray and sparks
+  drawParticles();           // dust, spray, sparks and crash pieces
+  drawCrashWorld();          // crash: shockwave, fire and comic words
   drawAtmosphere(lights);
   drawSpeedLines();
   ctx.restore();
