@@ -98,17 +98,48 @@
             <button id="color-buy" class="btn buy small hidden">Bilhin ₱40</button>
           </div>
 
-          <div class="best-badge">🏆 Best: <strong id="home-best">0</strong> &nbsp;·&nbsp; 💰 Pera: <strong>₱<span id="wallet">0</span></strong></div>
+          <div class="best-badge">🏆 Best: <strong id="home-best">0</strong> &nbsp;·&nbsp; 💰 Pera: <strong>₱<span id="wallet">0</span></strong>
+            &nbsp;·&nbsp; <span title="Shields: one is used at the start of your next run">🛡 <strong id="item-shield">0</strong></span>
+            &nbsp;<span title="Revives: keep driving after a crash">❤️ <strong id="item-revive">0</strong></span></div>
 
           <div class="menu">
             <button id="play-btn" class="btn big">▶ PLAY</button>
             <button id="howto-btn" class="btn ghost">How to Play</button>
           </div>
           <!-- Sound settings: each player can turn sound effects and music on or off -->
+          <!-- Spin the wheel and daily quests -->
+          <div class="extras-row">
+            <button id="spin-open" class="toggle gold">🎡 Spin ₱50</button>
+            <button id="quest-open" class="toggle gold">📋 Daily Quests <span id="quest-badge" class="badge hidden">0</span></button>
+          </div>
           <div class="sound-row">
             <button id="sfx-toggle" class="toggle" aria-pressed="true">🔊 Sounds: ON</button>
             <button id="music-toggle" class="toggle" aria-pressed="true">🎵 Music: ON</button>
           </div>
+        </div>
+      </div>
+
+      <!-- ===== SPIN THE WHEEL ===== -->
+      <div id="wheel" class="screen hidden">
+        <div class="jeep-panel wheel-panel">
+          <h2>🎡 Spin the Wheel!</h2>
+          <p class="wheel-info">₱50 per spin · Pera: <strong>₱<span id="wheel-wallet">0</span></strong></p>
+          <canvas id="wheel-canvas" width="320" height="320"></canvas>
+          <p id="spin-result" class="spin-result">Shield, Revive or up to ₱500!</p>
+          <div class="menu">
+            <button id="spin-btn" class="btn big">SPIN! ₱50</button>
+            <button id="wheel-back" class="btn ghost">Bumalik</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== DAILY QUESTS ===== -->
+      <div id="quests" class="screen hidden">
+        <div class="jeep-panel quest-panel">
+          <h2>📋 Daily Quests</h2>
+          <p class="quest-info">New quests every day at midnight. Progress counts across all your runs today.</p>
+          <div id="quest-list" class="quest-list"></div>
+          <button id="quest-back" class="btn ghost">Bumalik</button>
         </div>
       </div>
 
@@ -191,6 +222,8 @@
           <p class="final">Score: <strong id="final-score">0</strong></p>
           <p class="final-best">Kita: ₱<span id="over-kita">0</span> · Narating: <span id="over-loc">Calauan</span></p>
           <p class="final-best">Best: <span id="over-best">0</span></p>
+          <!-- only shown when you have a Revive: keep driving from where you crashed -->
+          <button id="revive-btn" class="btn revive hidden">❤️ Revive (x1)</button>
           <div class="menu">
             <button id="again-btn" class="btn big">Ulitin!</button>
             <button id="home-btn" class="btn ghost">Home</button>

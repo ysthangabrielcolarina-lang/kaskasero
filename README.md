@@ -33,6 +33,10 @@ Works on computers and phones. No download needed.
   - 🏝️ **Visayas** (islands and beaches): Cebu City → Bohol → Iloilo → Bacolod → Boracay
   - 🦅 **Mindanao** (rainforest and volcanoes): Cagayan de Oro → Bukidnon → Davao → General Santos → Zamboanga
 - **Map screen:** before each trip you pick a map, and every card shows its whole route. Then a plane flies you over the islands to your first stop ("Lipad papuntang VISAYAS!").
+- **Airport start:** every run begins with 300 m through an airport (terminal, control tower, parked planes, hangar, runway lights) before the first place.
+- **🎡 Spin the Wheel (₱50):** win a Shield, a Revive, ₱25, ₱75, ₱100 or (rarely) ₱500.
+- **📋 Daily Quests:** 3 new quests every day (overtake vehicles, close calls, coins, km, hit vehicles using a Shield, and more). Rewards: Pera, Shields and Revives.
+- **Items:** a Shield item gives you a shield at the start of your next run; a Revive lets you keep driving from where you crashed.
 - **Skyways and airplanes:** raised skyways (with traffic on top) cross over the road on SLEX, NLEX and in big cities, and planes take off over Manila, Cebu City and Davao.
 - **Local landmarks:** the Pineapple Plaza and PUP Calauan, Bay's garden shops and monay bakeries, the Rizal Shrine in Calamba, plus Mt. Kalisungan, Mt. Makiling and Taal Volcano in the background. North of Manila: giant parols, sisig and Mt. Arayat in Pampanga; the pink cathedral, Burnham Park and strawberry farms in foggy, pine-covered Baguio; Vigan's heritage houses, Paoay Church and the Bangui windmills in Ilocos.
 - **Visayas landmarks:** Magellan's Cross, the Basilica del Santo Niño and lechon in Cebu; the Chocolate Hills, a giant tarsier, the Loboc River and Baclayon Church in Bohol; Miagao Church and La Paz batchoy in Iloilo; MassKara masks, The Ruins and chicken inasal in Bacolod; paraw sailboats, Willy's Rock and beach bars in Boracay.

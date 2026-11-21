@@ -1020,10 +1020,10 @@ backdrops.zambo = makeLayer((g) => {
 });
 
 // The Visayas and Mindanao backgrounds (they draw their own hills, so the green hills hide)
-const NEW_BG = ["cebu", "bohol", "iloilo", "sugarcane", "boracay", "cdo", "bukidnon", "apo", "gensan", "zambo"];
+const NEW_BG = ["cebu", "bohol", "iloilo", "sugarcane", "boracay", "cdo", "bukidnon", "apo", "gensan", "zambo", "airport"];
 // How much each backdrop shows right now (they fade into each other)
 const bgWeight = { generic: 1, kalisungan: 0, makiling: 0, taal: 0, manila: 0, arayat: 0, baguio: 0, ilocos: 0,
-  cebu: 0, bohol: 0, iloilo: 0, sugarcane: 0, boracay: 0, cdo: 0, bukidnon: 0, apo: 0, gensan: 0, zambo: 0 };
+  cebu: 0, bohol: 0, iloilo: 0, sugarcane: 0, boracay: 0, cdo: 0, bukidnon: 0, apo: 0, gensan: 0, zambo: 0, airport: 0 };
 
 const skyGradient = ctx.createLinearGradient(0, 0, 0, HORIZON);
 skyGradient.addColorStop(0, "#a9e3f2");
@@ -1074,7 +1074,8 @@ const ptype = () => {
 bestEl.textContent = best;
 homeBestEl.textContent = best;
 
-function resetGame() {
+// withAirport = true: the run starts at an airport (the first 300 m)
+function resetGame(withAirport = false) {
   position = 0;           // how far the camera has travelled
   speed = ptype().startSpeed || MIN_SPEED;
   playerLane = 1;
@@ -1139,12 +1140,26 @@ function resetGame() {
   sceneryQueue = [...LOCATIONS[0].landmarks];
   nextLandmarkAt = 0;
   nextSkywayAt = 20000;
-  // some small things already beside the road at the start
-  for (let d = 15; d < DRAW_DIST * 0.9; d += 30) {
-    addScenery(pickOne(LOCATIONS[0].fillers), d * SEG_LEN, d % 60 < 30 ? -1 : 1);
+  if (withAirport) {
+    // the airport: terminal, control tower, a parked plane and the hangar along the first 300 m
+    addWelcomeArch(12 * SEG_LEN, MAPS[mapChoice].name);          // "WELCOME TO VISAYAS"
+    [["terminal", 22, -1], ["tower", 40, 1], ["parkedplane", 70, 1], ["hangar", 95, -1]].forEach(([kind, d, side]) =>
+      addScenery(kind, d * SEG_LEN, side, true));
+    for (let d = 18; d < DRAW_DIST * 0.9; d += 26) {             // small things: airport stuff first, then the first place's
+      const at = d * SEG_LEN, side = d % 52 < 26 ? 1 : -1;
+      const list = at < AIRPORT_LEN ? AIRPORT.fillers : LOCATIONS[0].fillers;
+      if (list && sideFree(side, at, SCENERY_GAP)) addScenery(pickOne(list), at, side);
+    }
+    addWelcomeArch(AIRPORT_LEN + 1500, LOCATIONS[0].name);       // the first real place starts here
+    nextLandmarkAt = AIRPORT_LEN + 3000;
+  } else {
+    // some small things already beside the road at the start
+    for (let d = 15; d < DRAW_DIST * 0.9; d += 30) {
+      addScenery(pickOne(LOCATIONS[0].fillers), d * SEG_LEN, d % 60 < 30 ? -1 : 1);
+    }
+    addWelcomeArch(30 * SEG_LEN, LOCATIONS[0].name);
   }
   nextFillerAt = DRAW_DIST * SEG_LEN;
-  addWelcomeArch(30 * SEG_LEN, LOCATIONS[0].name);
   updateHud();
 }
 
@@ -1296,6 +1311,7 @@ document.addEventListener("keydown", (e) => {
   else if ((k === "enter" || k === " ") && mode === "home" && !homeScreen.classList.contains("hidden")) openMaps();
   else if ((k === "enter" || k === " ") && mode === "over") transition(startGame);
   if (k === "escape" && onMaps) transition(() => showScreen(homeScreen));
+  if (k === "escape" && mode === "home" && (!wheelScreen.classList.contains("hidden") || !questScreen.classList.contains("hidden")) && !spinning) transition(goHomeScreen);
   if (onMaps && (k === "arrowleft" || k === "arrowright")) {        // move between the maps
     const keys = Object.keys(MAPS);
     const i = (keys.indexOf(mapChoice) + (k === "arrowright" ? 1 : -1) + keys.length) % keys.length;
@@ -2924,7 +2940,9 @@ function saveMapChoice(m) {
 }
 let mapChoice = loadMapChoice();
 let LOCATIONS = MAPS[mapChoice].places;                    // the places of the map you're driving
-const currentLocation = () => LOCATIONS[level % LOCATIONS.length];
+// The airport counts as a place for the first 300 m of a run (not on the home screen)
+const inAirport = () => mode !== "home" && level === 0 && odo < AIRPORT_LEN;
+const currentLocation = () => (inAirport() ? AIRPORT : LOCATIONS[level % LOCATIONS.length]);
 // How many vehicles can be on the road at once in this place
 function carLimit() {
   const normal = Math.min(14, 6 + level * 2);
@@ -2958,7 +2976,9 @@ function updateLevel() {
   if (newLevel > level) {
     const leaving = currentLocation();
     level = newLevel;
+    if (level >= 2) questAdd("place");                 // reached the 3rd place
     if (leaving.heat) {                                // survived the TAG-INIT challenge!
+      questAdd("heat");
       kita += 100;
       popup("TAG-INIT SURVIVOR! +₱100", "#fb923c");
     }
@@ -2990,6 +3010,7 @@ function addWelcomeArch(at, name) {
 }
 
 function locationAt(dist) {
+  if (mode !== "home" && dist < AIRPORT_LEN) return AIRPORT;   // the airport at the start of a run
   let lvl = 0;
   for (const zn of zones) if (zn.from <= dist) lvl = zn.level;
   return LOCATIONS[lvl % LOCATIONS.length];
@@ -3095,6 +3116,8 @@ function spawnPickups(dt) {
 }
 
 function collectPowerUp(kind) {
+  questAdd("power");
+  if (kind === "enforcer") questAdd("enforcer");
   Sound.powerup();
   popup(POWERS[kind].label + "!", POWERS[kind].color);
   pfx = { kind, t: 0 };                      // ring + icon burst from the car
@@ -3124,6 +3147,7 @@ function collectPowerUp(kind) {
 
 // The shield takes the hit instead of you
 function useShield(car) {
+  questAdd("bump");                        // daily quest: hit vehicles using a shield
   shield = false;
   invulnT = 90;            // 1.5 seconds where you can't crash
   shake = 12;
@@ -3134,6 +3158,7 @@ function useShield(car) {
 
 // CLOSE CALL: you got out of a vehicle's lane just before reaching it
 function nearMiss(car) {
+  questAdd("close");
   sparks(Math.sign(car.x - playerX) || 1);       // sparks on the side you slipped past
   combo = comboT > 0 ? combo + 1 : 1;
   comboT = 180;                                   // 3 seconds to get the next one
@@ -3519,7 +3544,16 @@ function update(dt, demo = false) {
 
   const prevPz = playerZ();         // where we were at the start of this frame
   position = (position + speed * wdt) % TRACK_LEN;
+  const wasAirport = !demo && level === 0 && odo < AIRPORT_LEN;
   odo += speed * wdt;
+  if (!demo) {                                     // daily quest: km driven (added every 0.1 km)
+    kmForQuest += (speed * wdt) / UNITS_PER_KM;
+    if (kmForQuest >= 0.1) { questAdd("km", 0.1); kmForQuest -= 0.1; }
+  }
+  if (wasAirport && odo >= AIRPORT_LEN) {         // out of the airport: "Now entering Calauan"
+    bannerT = 210;
+    Sound.levelUp();
+  }
   setHills(hillsFor(odo));          // the hills grow slowly as you drive further
   const pz = playerZ();
   updateScenery();
@@ -3600,6 +3634,7 @@ function update(dt, demo = false) {
     }
     if (before >= 0 && now < 0 && !demo) {
       score += 10;                                  // +10 per vehicle passed
+      questAdd("pass");
       if (car.type === "jeepney") Sound.horn();     // jeepneys honk as you pass
       if (car.danger && frame - car.danger < 50) nearMiss(car);   // dodged at the last moment
     }
@@ -3626,6 +3661,7 @@ function update(dt, demo = false) {
         score += 50;                                // +50 points per coin
         const pesos = Math.round(5 * (ptype().coinMult || 1));
         kita += pesos;                              // and some pesos
+        questAdd("coins");
         Sound.coin();
         popup(`AYOS! +₱${pesos}`, "#ffd23f");
       }
@@ -5798,6 +5834,124 @@ function drawJungleTree(x, y, size) {
   ctx.beginPath(); ctx.arc(x - 0.08 * h, y - 0.86 * h, 0.08 * h, 0, Math.PI * 2); ctx.fill();
 }
 
+// ----- AIRPORT: every run starts at an airport (the first 300 m), then the first place -----
+const AIRPORT_LEN = 30000;                 // 300 meters of road
+const AIRPORT = { name: "Paliparan", icon: "✈️", time: "day", rain: false, bg: "airport", planes: true,
+  note: "Welcome! Drive out of the airport",
+  landmarks: ["terminal", "tower", "parkedplane", "hangar"],
+  fillers: ["runwaylights", "windsock", "luggage", "runwaylights"],
+  grass: [[170, 198, 142], [160, 188, 132]] };
+// Background: a long runway at the horizon with planes waiting, and the terminal far away
+backdrops.airport = makeLayer((g) => {
+  farPeaks(g, "#d6e3dc");
+  g.fillStyle = "#9ca3af";                               // the runway
+  g.fillRect(0, HORIZON - 10, LAYER_W, 8);
+  g.fillStyle = "#f8fafc";
+  for (let x = 0; x < LAYER_W; x += 40) g.fillRect(x, HORIZON - 6.5, 20, 1.5);   // runway center line
+  for (let x = 0; x < LAYER_W; x += 26) {                // runway lights
+    g.fillStyle = x % 52 ? "#60a5fa" : "#fde047";
+    g.fillRect(x, HORIZON - 11, 2, 2);
+  }
+  for (let i = 0; i < 6; i++) {                          // little planes waiting on the runway
+    const x = (i / 6) * LAYER_W + 80;
+    wrapped(x, (px) => {
+      g.fillStyle = "#f1f5f9"; g.fillRect(px - 16, HORIZON - 16, 32, 5);
+      fillPoly(g, "#1d4ed8", [px - 16, HORIZON - 16, px - 10, HORIZON - 16, px - 15, HORIZON - 24]);
+      fillPoly(g, "#cbd5e1", [px - 2, HORIZON - 12, px + 4, HORIZON - 12, px - 4, HORIZON - 8]);
+    });
+  }
+  for (let i = 0; i < 3; i++) {                          // terminal buildings far away
+    const x = LAYER_W * (0.15 + i * 0.33);
+    wrapped(x, (px) => {
+      g.fillStyle = "#e2e8f0"; g.fillRect(px, HORIZON - 30, 120, 18);
+      g.fillStyle = "#7dd3fc"; g.fillRect(px + 4, HORIZON - 27, 112, 8);
+      g.fillStyle = "#94a3b8"; g.fillRect(px + 130, HORIZON - 52, 6, 40);
+      g.fillStyle = "#334155"; g.fillRect(px + 124, HORIZON - 60, 18, 9);
+    });
+  }
+});
+Object.assign(LANDMARKS, {
+  // Terminal building: long glass front, a curved roof and a jetway (tunnel to the plane)
+  terminal: { w: 9600, draw(p) {
+    p.box(-4600, 9000, 2600, 2400, "#e2e8f0", "#cbd5e1", null);
+    p.R(-4400, 600, 8600, 1700, "#7dd3fc");               // big glass wall
+    for (let i = 0; i < 18; i++) p.R(-4400 + i * 480, 600, 40, 1700, "#94a3b8");
+    p.P("#f1f5f9", [-4900, 2600, 4500, 2600, 4200, 3300, -4600, 3300]);   // curved roof
+    p.P("#cbd5e1", [-4600, 3300, 4200, 3300, 3800, 3500, -4200, 3500]);
+    p.R(-1800, 2700, 3600, 450, "#1d4ed8");                // blue sign band
+    p.R(-1600, 2780, 3200, 60, "#facc15");
+    for (const dx of [-2200, 1400]) p.R(dx, 0, 900, 600, "#475569");   // entrances
+    p.R(4400, 1200, 2600, 500, "#d1d5db");                 // jetway
+    p.R(6800, 600, 200, 1100, "#94a3b8");
+    for (let i = 0; i < 6; i++) p.R(-4300 + i * 1500, 0, 600, 420, ["#ef4444", "#3b82f6", "#facc15"][i % 3]);   // taxis and cars out front
+  }},
+  // Control tower: tall stem with a glass room on top and a blinking red light
+  tower: { w: 3000, draw(p) {
+    p.R(-1200, 0, 2400, 900, "#cbd5e1");                   // base building
+    p.R(-450, 900, 900, 5600, "#e2e8f0");                  // tall stem
+    p.R(150, 900, 300, 5600, "#cbd5e1");
+    p.P("#94a3b8", [-1300, 6500, 1300, 6500, 1000, 6800, -1000, 6800]);
+    p.P("#38bdf8", [-1250, 6800, 1250, 6800, 1050, 7700, -1050, 7700]);   // glass control room
+    for (let i = 0; i < 6; i++) p.R(-1000 + i * 400, 6800, 40, 900, "#475569");
+    p.P("#475569", [-1150, 7700, 1150, 7700, 800, 8000, -800, 8000]);
+    p.R(-40, 8000, 80, 900, "#64748b");                    // antenna
+    if (Math.floor(frame / 30) % 2) p.C(0, 8950, 160, "#ff2d2d");
+  }},
+  // A parked plane with stairs and a luggage truck beside it
+  parkedplane: { w: 8000, draw(p, o) {
+    const tail = ["#1d4ed8", "#dc2626", "#16a34a"][Math.floor(o.variant * 3)];
+    p.E(0, 1300, 3800, 650, "#f1f5f9");                    // body (front view of the side)
+    p.R(-3600, 1100, 7200, 160, tail);                     // stripe
+    for (let i = 0; i < 16; i++) p.C(-3000 + i * 380, 1500, 90, "#1e293b");   // windows
+    p.P("#1e293b", [3300, 1500, 3800, 1350, 3700, 1650]);  // cockpit
+    p.P(tail, [-3800, 1500, -2700, 1500, -3500, 3300, -4100, 3300]);   // tail fin
+    p.P("#cbd5e1", [-800, 1000, 900, 1000, -1400, 300, -2600, 300]);   // wing
+    p.E(-1500, 600, 450, 230, "#94a3b8");                  // engine
+    for (const lx of [-2400, 2600]) { p.R(lx, 0, 80, 650, "#475569"); p.C(lx + 40, 120, 160, "#111111"); }   // wheels
+    p.P("#facc15", [2200, 0, 2800, 0, 3200, 1100, 2900, 1100]);   // stairs
+    p.R(-3600, 0, 1300, 500, "#f97316");                   // luggage truck
+    p.R(-3500, 500, 500, 300, "#bfe3f5");
+  }},
+  // Hangar: a big curved-roof building with open doors and a plane inside
+  hangar: { w: 7600, draw(p) {
+    const pts = [];
+    for (let i = 0; i <= 16; i++) { const a = Math.PI - (i / 16) * Math.PI; pts.push(Math.cos(a) * 3600, Math.sin(a) * 3800); }
+    p.P("#9ca3af", pts);
+    for (let i = 1; i < 8; i++) p.R(-3600 + i * 900, 0, 30, 3800 * Math.sin(Math.acos((i * 900 - 3600) / 3600)), "rgba(71,85,105,0.4)");
+    p.R(-2400, 0, 4800, 2400, "#1f2937");                  // open doors: dark inside
+    p.E(0, 900, 1800, 350, "#e2e8f0");                     // a plane inside
+    p.P("#dc2626", [-1800, 1000, -1300, 1000, -1700, 1900]);
+    p.R(-2600, 2400, 5200, 200, "#facc15");
+  }},
+  // Rows of runway lights (blue and white)
+  runwaylights: { w: 2600, draw(p) {
+    for (let i = 0; i < 6; i++) {
+      const x = -1200 + i * 480;
+      p.R(x - 30, 0, 60, 380, "#475569");
+      p.C(x, 420, 90, i % 2 ? "#60a5fa" : "#f8fafc");
+      p.C(x, 420, 170, `rgba(147,197,253,${0.2 + darkness() * 0.5})`);
+    }
+  }},
+  // Windsock: shows which way the wind blows (it flaps)
+  windsock: { w: 1400, draw(p) {
+    p.R(-50, 0, 100, 2600, "#e5e7eb");
+    const flap = Math.sin(frame * 0.15) * 80;
+    for (let i = 0; i < 5; i++) p.P(i % 2 ? "#ffffff" : "#f97316",
+      [i * 200, 2500 - i * 20 + flap * i * 0.2, (i + 1) * 200, 2500 - (i + 1) * 20 + flap * (i + 1) * 0.2,
+       (i + 1) * 200, 2200 + (i + 1) * 30 + flap * (i + 1) * 0.2, i * 200, 2200 + i * 30 + flap * i * 0.2]);
+  }},
+  // Luggage carts pulled by a little tug
+  luggage: { w: 3200, draw(p) {
+    p.R(-1500, 150, 700, 450, "#facc15"); p.R(-1450, 600, 300, 250, "#bfe3f5");   // tug
+    for (let i = 0; i < 3; i++) {
+      const cx = -700 + i * 800;
+      p.R(cx, 150, 700, 120, "#64748b");
+      for (let k = 0; k < 3; k++) p.R(cx + 40 + k * 220, 270, 200, 260 + (k % 2) * 80, ["#ef4444", "#1d4ed8", "#16a34a", "#a855f7"][(i + k) % 4]);
+    }
+    for (let i = 0; i < 6; i++) p.C(-1300 + i * 560, 120, 110, "#111111");
+  }},
+});
+
 // A pine tree drawn with the landmark painter (layers of dark green triangles)
 function drawPine(p, x, h) {
   p.R(x - 70, 0, 140, h * 0.25, "#5b3a22");
@@ -6995,8 +7149,8 @@ function drawOverlays() {
   // Where you are: always shown at the top middle while driving
   if (["countdown", "playing", "crash"].includes(mode)) {
     const here = currentLocation().name.toUpperCase();
-    const next = LOCATIONS[(level + 1) % LOCATIONS.length].name;
-    const km = Math.max(0, ((level + 1) * LOCATION_DIST - odo) / UNITS_PER_KM);
+    const next = inAirport() ? LOCATIONS[0].name : LOCATIONS[(level + 1) % LOCATIONS.length].name;
+    const km = Math.max(0, ((inAirport() ? AIRPORT_LEN : (level + 1) * LOCATION_DIST) - odo) / UNITS_PER_KM);
     const nextText = `→ ${next} ${km.toFixed(1)} km`;
     ctx.font = "900 24px 'Trebuchet MS', sans-serif";
     const w1 = ctx.measureText("📍 " + here).width;
@@ -7587,7 +7741,7 @@ function updateHowto(now) {
 // ----- 17. Switching screens -----
 // Shows one screen (or none) and hides the others
 function showScreen(screen) {
-  for (const el of [homeScreen, howtoScreen, overScreen, mapsScreen]) el.classList.add("hidden");
+  for (const el of [homeScreen, howtoScreen, overScreen, mapsScreen, wheelScreen, questScreen]) el.classList.add("hidden");
   if (screen) screen.classList.remove("hidden");
   // The score bar and touch buttons only show during a run
   const inRun = ["countdown", "playing", "crash"].includes(mode);
@@ -7604,6 +7758,262 @@ function goHome() {
   showGarage();
   showScreen(homeScreen);
 }
+
+// ----- ITEMS: shields and revives you own (won on the wheel or from quests) -----
+function loadItems() {
+  try { return { shield: 0, revive: 0, ...JSON.parse(localStorage.getItem("highwayDashItems")) }; }
+  catch { return { shield: 0, revive: 0 }; }
+}
+let items = loadItems();
+function saveItems() {
+  try { localStorage.setItem("highwayDashItems", JSON.stringify(items)); } catch { /* ignore */ }
+  showItems();
+}
+function showItems() {
+  document.getElementById("item-shield").textContent = items.shield;
+  document.getElementById("item-revive").textContent = items.revive;
+}
+// Gives a reward: { kind: "shield" | "revive" | "peso", n }
+function giveReward(r) {
+  if (r.kind === "peso") { wallet += r.n; saveWallet(wallet); }
+  else { items[r.kind] += r.n; saveItems(); }
+  document.getElementById("wallet").textContent = wallet;
+}
+const rewardText = (r) => (r.kind === "peso" ? `₱${r.n}` : `${r.kind === "shield" ? "🛡 Shield" : "❤️ Revive"}${r.n > 1 ? " x" + r.n : ""}`);
+
+// REVIVE: after a crash, use a Revive to keep driving from the same spot
+let kitaBanked = 0;                     // pesos from this run already added to your Pera
+document.getElementById("revive-btn").addEventListener("click", revive);
+function revive() {
+  if (mode !== "over" || items.revive <= 0) return;
+  items.revive--;
+  saveItems();
+  transition(() => {
+    mode = "playing";
+    showScreen(null);
+    crashT = 0; crashZoom = 0; shake = 0; flashT = 0;
+    crashWords = []; crashCracks = [];
+    crossing = null;                              // (a crossing you stopped at is gone)
+    for (const car of cars) {                     // clear the road just ahead so you can get going
+      const d = relZ(car.z, playerZ());
+      if (d > -CAR_LEN && d < 40 * SEG_LEN) placeCar(car, farAhead());
+    }
+    crashCar = null;
+    invulnT = 150;                                // 2.5 seconds where you can't crash
+    popup("BUHAY PA! ❤️", "#f43f5e");
+    Sound.powerup();
+  });
+}
+
+// ----- SPIN THE WHEEL (₱50 per spin) -----
+// weight = the chance to win it, in percent (they add up to 100)
+const WHEEL = [
+  { reward: { kind: "peso", n: 25 },    color: "#f97316", weight: 30 },   // 30%
+  { reward: { kind: "shield", n: 1 },   color: "#0ea5e9", weight: 20 },   // 20%
+  { reward: { kind: "peso", n: 75 },    color: "#22c55e", weight: 15 },   // 15%
+  { reward: { kind: "revive", n: 1 },   color: "#e11d48", weight: 20 },   // 20%
+  { reward: { kind: "peso", n: 100 },   color: "#a855f7", weight: 10 },   // 10%
+  { reward: { kind: "peso", n: 500 },   color: "#eab308", weight: 5 },    // 5%
+];
+const SPIN_COST = 50;
+const wheelScreen = document.getElementById("wheel");
+const wheelCanvas = document.getElementById("wheel-canvas");
+let wheelAngle = 0, spinning = false;
+function drawWheel() {
+  const c = wheelCanvas.getContext("2d"), r = 140, cx = 160, cy = 165, n = WHEEL.length, slice = (Math.PI * 2) / n;
+  c.clearRect(0, 0, 320, 320);
+  c.fillStyle = "#7c2d12";                           // wooden rim with little lights
+  c.beginPath(); c.arc(cx, cy, r + 12, 0, Math.PI * 2); c.fill();
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    c.fillStyle = (i + Math.floor(performance.now() / 200)) % 2 ? "#fde047" : "#fff7ed";
+    c.beginPath(); c.arc(cx + Math.cos(a) * (r + 6), cy + Math.sin(a) * (r + 6), 3.5, 0, Math.PI * 2); c.fill();
+  }
+  WHEEL.forEach((w, i) => {                           // the colored slices with their prizes
+    const a0 = wheelAngle + i * slice - Math.PI / 2;  // slice 0 starts at the top
+    c.fillStyle = w.color;
+    c.beginPath(); c.moveTo(cx, cy); c.arc(cx, cy, r, a0, a0 + slice); c.closePath(); c.fill();
+    c.strokeStyle = "#ffffff"; c.lineWidth = 3; c.stroke();
+    c.save();
+    c.translate(cx, cy);
+    c.rotate(a0 + slice / 2);
+    c.textAlign = "right";
+    c.textBaseline = "middle";
+    c.font = "900 19px 'Trebuchet MS', sans-serif";
+    c.lineWidth = 4; c.strokeStyle = "rgba(0,0,0,0.45)";
+    const label = rewardText(w.reward);
+    c.strokeText(label, r - 12, 0);
+    c.fillStyle = "#ffffff";
+    c.fillText(label, r - 12, 0);
+    c.restore();
+  });
+  c.fillStyle = "#facc15";                            // middle button
+  c.beginPath(); c.arc(cx, cy, 30, 0, Math.PI * 2); c.fill();
+  c.fillStyle = "#7c2d12";
+  c.font = "900 13px 'Trebuchet MS', sans-serif";
+  c.textAlign = "center"; c.textBaseline = "middle";
+  c.fillText("SUWERTE", cx, cy);
+  c.fillStyle = "#ffffff";                            // the pointer at the top
+  c.beginPath(); c.moveTo(cx - 14, 4); c.lineTo(cx + 14, 4); c.lineTo(cx, 34); c.closePath(); c.fill();
+  c.strokeStyle = "#7c2d12"; c.lineWidth = 3; c.stroke();
+}
+function showWheelInfo() {
+  document.getElementById("wheel-wallet").textContent = wallet;
+  document.getElementById("spin-btn").disabled = spinning || wallet < SPIN_COST;
+}
+function openWheel() {
+  Sound.init();
+  showWheelInfo();
+  drawWheel();
+  transition(() => showScreen(wheelScreen));
+}
+function spinWheel() {
+  if (spinning || wallet < SPIN_COST) return;
+  wallet -= SPIN_COST;
+  saveWallet(wallet);
+  spinning = true;
+  showWheelInfo();
+  document.getElementById("spin-result").textContent = "Umiikot... 🎡";
+  // pick the prize first (using the weights), then turn the wheel so it stops there
+  let roll = Math.random() * WHEEL.reduce((sum, w) => sum + w.weight, 0), pick = 0;
+  while (roll >= WHEEL[pick].weight) { roll -= WHEEL[pick].weight; pick++; }
+  const slice = (Math.PI * 2) / WHEEL.length;
+  const stopAt = -(pick * slice + slice / 2) + (Math.random() - 0.5) * slice * 0.6;   // that slice under the pointer
+  const start = wheelAngle;
+  const end = start + Math.PI * 2 * 6 + ((stopAt - start) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+  const t0 = performance.now(), dur = 4200;
+  let lastSlice = Math.floor(start / slice);
+  const step = (now) => {
+    const t = Math.min(1, (now - t0) / dur);
+    wheelAngle = start + (end - start) * (1 - Math.pow(1 - t, 3));   // fast, then slows down
+    const s = Math.floor(wheelAngle / slice);
+    if (s !== lastSlice) { lastSlice = s; Sound.tone(900, 0.03, "square", 0.05); }   // tick!
+    drawWheel();
+    if (t < 1) { requestAnimationFrame(step); return; }
+    spinning = false;
+    const prize = WHEEL[pick].reward;
+    giveReward(prize);
+    questAdd("spin");
+    document.getElementById("spin-result").textContent = `Nanalo ka: ${rewardText(prize)}! 🎉`;
+    if (prize.kind === "peso" && prize.n >= 500) burstConfetti();
+    Sound.powerup();
+    showWheelInfo();
+  };
+  requestAnimationFrame(step);
+}
+document.getElementById("spin-open").addEventListener("click", openWheel);
+document.getElementById("spin-btn").addEventListener("click", spinWheel);
+document.getElementById("wheel-back").addEventListener("click", () => { if (!spinning) transition(goHomeScreen); });
+// keep the wheel's little lights blinking while it's open
+setInterval(() => { if (!wheelScreen.classList.contains("hidden") && !spinning) drawWheel(); }, 200);
+
+// ----- DAILY QUESTS -----
+// Every day you get 3 quests (the same 3 all day). Progress counts across all your runs.
+// {n} in the text is replaced by the goal.
+const QUEST_POOL = [
+  { id: "pass",     text: "Overtake {n} vehicles",             goal: 40 },
+  { id: "close",    text: "Get {n} close calls (GALING!)",     goal: 8 },
+  { id: "coins",    text: "Collect {n} ₱ coins",               goal: 25 },
+  { id: "km",       text: "Drive {n} km in total",             goal: 6 },
+  { id: "place",    text: "Reach the 3rd place in one run",    goal: 1 },
+  { id: "bump",     text: "Hit {n} vehicles using a Shield",   goal: 3 },
+  { id: "enforcer", text: "Call the Enforcer {n} times",       goal: 2 },
+  { id: "power",    text: "Grab {n} power-ups",                goal: 8 },
+  { id: "spin",     text: "Spin the wheel once",               goal: 1 },
+  { id: "heat",     text: "Survive a TAG-INIT challenge",      goal: 1 },
+];
+const QUEST_REWARDS = [{ kind: "peso", n: 150 }, { kind: "shield", n: 1 }, { kind: "revive", n: 1 },
+  { kind: "peso", n: 250 }, { kind: "shield", n: 2 }];
+const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+let quests = null;
+function loadQuests() {
+  try { const q = JSON.parse(localStorage.getItem("highwayDashQuests")); if (q && q.day === todayKey()) return q; }
+  catch { /* make new ones */ }
+  // a new day: pick 3 quests. The day's date is the "seed", so everyone gets the same 3 today.
+  let seedQ = 0;
+  for (const ch of todayKey()) seedQ = (seedQ * 31 + ch.charCodeAt(0)) % 2147483647;
+  const rnd = () => (seedQ = (seedQ * 16807) % 2147483647) / 2147483647;
+  const pool = [...QUEST_POOL], list = [];
+  for (let i = 0; i < 3; i++) {
+    const q = pool.splice(Math.floor(rnd() * pool.length), 1)[0];
+    // rewards: one easy (pesos or shield), one medium, and the last one always gives a Revive
+    const reward = i === 2 ? { kind: "revive", n: 1 } : QUEST_REWARDS[Math.floor(rnd() * QUEST_REWARDS.length)];
+    list.push({ id: q.id, goal: q.goal, prog: 0, claimed: false, reward });
+  }
+  return { day: todayKey(), list };
+}
+function saveQuests() {
+  try { localStorage.setItem("highwayDashQuests", JSON.stringify(quests)); } catch { /* ignore */ }
+  showQuestBadge();
+}
+function ensureQuests() {
+  if (!quests || quests.day !== todayKey()) { quests = loadQuests(); saveQuests(); }
+}
+// Adds progress to a quest (called from the game: passing cars, close calls, coins, ...)
+function questAdd(id, n = 1) {
+  ensureQuests();
+  let changed = false;
+  for (const q of quests.list) {
+    if (q.id !== id || q.prog >= q.goal) continue;
+    q.prog = Math.min(q.goal, q.prog + n);
+    changed = true;
+    if (q.prog >= q.goal && (mode === "playing" || mode === "crash")) {
+      popup("📋 QUEST DONE!", "#4ade80");
+      Sound.levelUp();
+    }
+  }
+  if (changed) saveQuests();
+}
+function showQuestBadge() {
+  const ready = quests ? quests.list.filter((q) => q.prog >= q.goal && !q.claimed).length : 0;
+  const b = document.getElementById("quest-badge");
+  b.textContent = ready;
+  b.classList.toggle("hidden", ready === 0);
+}
+const questScreen = document.getElementById("quests");
+function renderQuests() {
+  ensureQuests();
+  const box = document.getElementById("quest-list");
+  box.innerHTML = "";
+  for (const q of quests.list) {
+    const def = QUEST_POOL.find((d) => d.id === q.id);
+    const done = q.prog >= q.goal;
+    const shown = q.id === "km" ? `${q.prog.toFixed(1)} / ${q.goal}` : `${Math.floor(q.prog)} / ${q.goal}`;
+    const el = document.createElement("div");
+    el.className = "quest" + (done ? " done" : "");
+    el.innerHTML = `
+      <div class="quest-text">${def.text.replace("{n}", q.goal)}</div>
+      <button class="quest-btn${done && !q.claimed ? " claim" : ""}" ${done && !q.claimed ? "" : "disabled"}>
+        ${q.claimed ? "✓ Nakuha" : done ? "Kunin!" : shown}</button>
+      <div class="quest-bar"><i style="width:${(100 * q.prog) / q.goal}%"></i></div>
+      <div class="quest-reward">Reward: ${rewardText(q.reward)}</div>`;
+    el.querySelector("button").addEventListener("click", () => {
+      if (!done || q.claimed) return;
+      q.claimed = true;
+      giveReward(q.reward);
+      saveQuests();
+      Sound.powerup();
+      renderQuests();
+    });
+    box.appendChild(el);
+  }
+}
+function openQuests() {
+  Sound.init();
+  renderQuests();
+  transition(() => showScreen(questScreen));
+}
+document.getElementById("quest-open").addEventListener("click", openQuests);
+document.getElementById("quest-back").addEventListener("click", () => transition(goHomeScreen));
+// back to the home screen (from the wheel or quests)
+function goHomeScreen() {
+  showScreen(homeScreen);
+  showGarage();
+}
+let kmForQuest = 0;                    // distance not yet added to the "km" quest
+ensureQuests();
+showItems();
+
 
 // ----- Choosing a map -----
 // Each card shows the map's name, its theme, a little picture and the whole route,
@@ -7774,8 +8184,15 @@ function startGame() {
     showCarChoice();
   }
   Sound.init();          // browsers only allow sound after a click or key press
-  resetGame();
+  resetGame(true);       // every run starts at the airport
+  kitaBanked = 0;
   mode = "countdown";
+  if (!shield && items.shield > 0) {                  // you own a Shield item: start with a shield
+    items.shield--;
+    saveItems();
+    shield = true;
+    popup(`🛡 SHIELD! (${items.shield} left)`, POWERS.shield.color);
+  }
   showScreen(null);
 }
 
@@ -7791,8 +8208,12 @@ function gameOver() {
     overTitle.textContent = Math.random() < 0.5 ? "SAYANG!" : "HALA!";
   }
   document.getElementById("over-kita").textContent = kita;
-  wallet += kita;                                     // save this run's pesos
+  wallet += kita - kitaBanked;                        // save this run's pesos (only the new ones after a revive)
+  kitaBanked = kita;
   saveWallet(wallet);
+  const rb = document.getElementById("revive-btn");   // have a Revive? offer it
+  rb.classList.toggle("hidden", items.revive <= 0);
+  rb.textContent = `❤️ Revive (x${items.revive})`;
   document.getElementById("over-loc").textContent = currentLocation().name;
   finalScoreEl.textContent = score;
   overBestEl.textContent = best;
